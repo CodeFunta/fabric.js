@@ -1,4 +1,4 @@
-/* build: `node build.js modules=ALL exclude=gestures,cufon,json minifier=uglifyjs` */
+/* build: `node build.js modules=ALL exclude=gestures minifier=uglifyjs` */
 /*! Fabric.js Copyright 2008-2014, Printio (Juriy Zaytsev, Maxim Chernyak) */
 
 var fabric = fabric || { version: "1.4.12" };
@@ -54,6 +54,4190 @@ fabric.SHARED_ATTRIBUTES = [
  */
 fabric.DPI = 96;
 fabric.reNum = '(?:[-+]?(?:\\d+|\\d*\\.\\d+)(?:e[-+]?\\d+)?)';
+
+
+/*!
+ * Copyright (c) 2009 Simo Kinnunen.
+ * Licensed under the MIT license.
+ */
+
+var Cufon = (function() {
+
+  /** @ignore */
+  var api = function() {
+    return api.replace.apply(null, arguments);
+  };
+
+  /** @ignore */
+  var DOM = api.DOM = {
+
+    ready: (function() {
+
+      var complete = false, readyStatus = { loaded: 1, complete: 1 };
+
+      var queue = [], /** @ignore */ perform = function() {
+        if (complete) return;
+        complete = true;
+        for (var fn; fn = queue.shift(); fn());
+      };
+
+      // Gecko, Opera, WebKit r26101+
+
+      if (fabric.document.addEventListener) {
+        fabric.document.addEventListener('DOMContentLoaded', perform, false);
+        fabric.window.addEventListener('pageshow', perform, false); // For cached Gecko pages
+      }
+
+      // Old WebKit, Internet Explorer
+
+      if (!fabric.window.opera && fabric.document.readyState) (function() {
+        readyStatus[fabric.document.readyState] ? perform() : setTimeout(arguments.callee, 10);
+      })();
+
+      // Internet Explorer
+
+      if (fabric.document.readyState && fabric.document.createStyleSheet) (function() {
+        try {
+          fabric.document.body.doScroll('left');
+          perform();
+        }
+        catch (e) {
+          setTimeout(arguments.callee, 1);
+        }
+      })();
+
+      addEvent(fabric.window, 'load', perform); // Fallback
+
+      return function(listener) {
+        if (!arguments.length) perform();
+        else complete ? listener() : queue.push(listener);
+      };
+
+    })()
+
+  };
+
+  /** @ignore */
+  var CSS = api.CSS = /** @ignore */ {
+
+    /** @ignore */
+    Size: function(value, base) {
+
+      this.value = parseFloat(value);
+      this.unit = String(value).match(/[a-z%]*$/)[0] || 'px';
+
+      /** @ignore */
+      this.convert = function(value) {
+        return value / base * this.value;
+      };
+
+      /** @ignore */
+      this.convertFrom = function(value) {
+        return value / this.value * base;
+      };
+
+      /** @ignore */
+      this.toString = function() {
+        return this.value + this.unit;
+      };
+
+    },
+
+    /** @ignore */
+    getStyle: function(el) {
+      return new Style(el.style);
+      /*
+      var view = document.defaultView;
+      if (view && view.getComputedStyle) return new Style(view.getComputedStyle(el, null));
+      if (el.currentStyle) return new Style(el.currentStyle);
+      return new Style(el.style);
+      */
+    },
+
+    quotedList: cached(function(value) {
+      // doesn't work properly with empty quoted strings (""), but
+      // it's not worth the extra code.
+      var list = [], re = /\s*((["'])([\s\S]*?[^\\])\2|[^,]+)\s*/g, match;
+      while (match = re.exec(value)) list.push(match[3] || match[1]);
+      return list;
+    }),
+
+    ready: (function() {
+
+      var complete = false;
+
+      var queue = [], perform = function() {
+        complete = true;
+        for (var fn; fn = queue.shift(); fn());
+      };
+
+      // Safari 2 does not include <style> elements in document.styleSheets.
+      // Safari 2 also does not support Object.prototype.propertyIsEnumerable.
+
+      var styleElements = Object.prototype.propertyIsEnumerable ? elementsByTagName('style') : { length: 0 };
+      var linkElements = elementsByTagName('link');
+
+      DOM.ready(function() {
+        // These checks are actually only needed for WebKit-based browsers, but don't really hurt other browsers.
+        var linkStyles = 0, link;
+        for (var i = 0, l = linkElements.length; link = linkElements[i], i < l; ++i) {
+          // WebKit does not load alternate stylesheets.
+          if (!link.disabled && link.rel.toLowerCase() == 'stylesheet') ++linkStyles;
+        }
+        if (fabric.document.styleSheets.length >= styleElements.length + linkStyles) perform();
+        else setTimeout(arguments.callee, 10);
+      });
+
+      return function(listener) {
+        if (complete) listener();
+        else queue.push(listener);
+      };
+
+    })(),
+
+    /** @ignore */
+    supports: function(property, value) {
+      var checker = fabric.document.createElement('span').style;
+      if (checker[property] === undefined) return false;
+      checker[property] = value;
+      return checker[property] === value;
+    },
+
+    /** @ignore */
+    textAlign: function(word, style, position, wordCount) {
+      if (style.get('textAlign') == 'right') {
+        if (position > 0) word = ' ' + word;
+      }
+      else if (position < wordCount - 1) word += ' ';
+      return word;
+    },
+
+    /** @ignore */
+    textDecoration: function(el, style) {
+      if (!style) style = this.getStyle(el);
+      var types = {
+        underline: null,
+        overline: null,
+        'line-through': null
+      };
+      for (var search = el; search.parentNode && search.parentNode.nodeType == 1; ) {
+        var foundAll = true;
+        for (var type in types) {
+          if (types[type]) continue;
+          if (style.get('textDecoration').indexOf(type) != -1) types[type] = style.get('color');
+          foundAll = false;
+        }
+        if (foundAll) break; // this is rather unlikely to happen
+        style = this.getStyle(search = search.parentNode);
+      }
+      return types;
+    },
+
+    textShadow: cached(function(value) {
+      if (value == 'none') return null;
+      var shadows = [], currentShadow = {}, result, offCount = 0;
+      var re = /(#[a-f0-9]+|[a-z]+\(.*?\)|[a-z]+)|(-?[\d.]+[a-z%]*)|,/ig;
+      while (result = re.exec(value)) {
+        if (result[0] == ',') {
+          shadows.push(currentShadow);
+          currentShadow = {}, offCount = 0;
+        }
+        else if (result[1]) {
+          currentShadow.color = result[1];
+        }
+        else {
+          currentShadow[[ 'offX', 'offY', 'blur' ][offCount++]] = result[2];
+        }
+      }
+      shadows.push(currentShadow);
+      return shadows;
+    }),
+
+    color: cached(function(value) {
+      var parsed = {};
+      parsed.color = value.replace(/^rgba\((.*?),\s*([\d.]+)\)/, function($0, $1, $2) {
+        parsed.opacity = parseFloat($2);
+        return 'rgb(' + $1 + ')';
+      });
+      return parsed;
+    }),
+
+    /** @ignore */
+    textTransform: function(text, style) {
+      return text[{
+        uppercase: 'toUpperCase',
+        lowercase: 'toLowerCase'
+      }[style.get('textTransform')] || 'toString']();
+    }
+
+  };
+
+  function Font(data) {
+
+    var face = this.face = data.face;
+    this.glyphs = data.glyphs;
+    this.w = data.w;
+    this.baseSize = parseInt(face['units-per-em'], 10);
+
+    this.family = face['font-family'].toLowerCase();
+    this.weight = face['font-weight'];
+    this.style = face['font-style'] || 'normal';
+
+    this.viewBox = (function () {
+      var parts = face.bbox.split(/\s+/);
+      var box = {
+        minX: parseInt(parts[0], 10),
+        minY: parseInt(parts[1], 10),
+        maxX: parseInt(parts[2], 10),
+        maxY: parseInt(parts[3], 10)
+      };
+      box.width = box.maxX - box.minX,
+      box.height = box.maxY - box.minY;
+      /** @ignore */
+      box.toString = function() {
+        return [ this.minX, this.minY, this.width, this.height ].join(' ');
+      };
+      return box;
+    })();
+
+    this.ascent = -parseInt(face.ascent, 10);
+    this.descent = -parseInt(face.descent, 10);
+
+    this.height = -this.ascent + this.descent;
+
+  }
+
+  function FontFamily() {
+
+    var styles = {}, mapping = {
+      oblique: 'italic',
+      italic: 'oblique'
+    };
+
+    this.add = function(font) {
+      (styles[font.style] || (styles[font.style] = {}))[font.weight] = font;
+    };
+
+    /** @ignore */
+    this.get = function(style, weight) {
+      var weights = styles[style] || styles[mapping[style]]
+        || styles.normal || styles.italic || styles.oblique;
+      if (!weights) return null;
+      // we don't have to worry about "bolder" and "lighter"
+      // because IE's currentStyle returns a numeric value for it,
+      // and other browsers use the computed value anyway
+      weight = {
+        normal: 400,
+        bold: 700
+      }[weight] || parseInt(weight, 10);
+      if (weights[weight]) return weights[weight];
+      // http://www.w3.org/TR/CSS21/fonts.html#propdef-font-weight
+      // Gecko uses x99/x01 for lighter/bolder
+      var up = {
+        1: 1,
+        99: 0
+      }[weight % 100], alts = [], min, max;
+      if (up === undefined) up = weight > 400;
+      if (weight == 500) weight = 400;
+      for (var alt in weights) {
+        alt = parseInt(alt, 10);
+        if (!min || alt < min) min = alt;
+        if (!max || alt > max) max = alt;
+        alts.push(alt);
+      }
+      if (weight < min) weight = min;
+      if (weight > max) weight = max;
+      alts.sort(function(a, b) {
+        return (up
+          ? (a > weight && b > weight) ? a < b : a > b
+          : (a < weight && b < weight) ? a > b : a < b) ? -1 : 1;
+      });
+      return weights[alts[0]];
+    };
+
+  }
+
+  function HoverHandler() {
+
+    function contains(node, anotherNode) {
+      if (node.contains) return node.contains(anotherNode);
+      return node.compareDocumentPosition(anotherNode) & 16;
+    }
+
+    function onOverOut(e) {
+      var related = e.relatedTarget;
+      if (!related || contains(this, related)) return;
+      trigger(this);
+    }
+
+    function onEnterLeave(e) {
+      trigger(this);
+    }
+
+    function trigger(el) {
+      // A timeout is needed so that the event can actually "happen"
+      // before replace is triggered. This ensures that styles are up
+      // to date.
+      setTimeout(function() {
+        api.replace(el, sharedStorage.get(el).options, true);
+      }, 10);
+    }
+
+    this.attach = function(el) {
+      if (el.onmouseenter === undefined) {
+        addEvent(el, 'mouseover', onOverOut);
+        addEvent(el, 'mouseout', onOverOut);
+      }
+      else {
+        addEvent(el, 'mouseenter', onEnterLeave);
+        addEvent(el, 'mouseleave', onEnterLeave);
+      }
+    };
+
+  }
+
+  function Storage() {
+
+    var map = {}, at = 0;
+
+    function identify(el) {
+      return el.cufid || (el.cufid = ++at);
+    }
+
+    /** @ignore */
+    this.get = function(el) {
+      var id = identify(el);
+      return map[id] || (map[id] = {});
+    };
+
+  }
+
+  function Style(style) {
+
+    var custom = {}, sizes = {};
+
+    this.get = function(property) {
+      return custom[property] != undefined ? custom[property] : style[property];
+    };
+
+    this.getSize = function(property, base) {
+      return sizes[property] || (sizes[property] = new CSS.Size(this.get(property), base));
+    };
+
+    this.extend = function(styles) {
+      for (var property in styles) custom[property] = styles[property];
+      return this;
+    };
+
+  }
+
+  function addEvent(el, type, listener) {
+    if (el.addEventListener) {
+      el.addEventListener(type, listener, false);
+    }
+    else if (el.attachEvent) {
+      el.attachEvent('on' + type, function() {
+        return listener.call(el, fabric.window.event);
+      });
+    }
+  }
+
+  function attach(el, options) {
+    var storage = sharedStorage.get(el);
+    if (storage.options) return el;
+    if (options.hover && options.hoverables[el.nodeName.toLowerCase()]) {
+      hoverHandler.attach(el);
+    }
+    storage.options = options;
+    return el;
+  }
+
+  function cached(fun) {
+    var cache = {};
+    return function(key) {
+      if (!cache.hasOwnProperty(key)) cache[key] = fun.apply(null, arguments);
+      return cache[key];
+    };
+  }
+
+  function getFont(el, style) {
+    if (!style) style = CSS.getStyle(el);
+    var families = CSS.quotedList(style.get('fontFamily').toLowerCase()), family;
+    for (var i = 0, l = families.length; i < l; ++i) {
+      family = families[i];
+      if (fonts[family]) return fonts[family].get(style.get('fontStyle'), style.get('fontWeight'));
+    }
+    return null;
+  }
+
+  function elementsByTagName(query) {
+    return fabric.document.getElementsByTagName(query);
+  }
+
+  function merge() {
+    var merged = {}, key;
+    for (var i = 0, l = arguments.length; i < l; ++i) {
+      for (key in arguments[i]) merged[key] = arguments[i][key];
+    }
+    return merged;
+  }
+
+  function process(font, text, style, options, node, el) {
+
+    var separate = options.separate;
+    if (separate == 'none') return engines[options.engine].apply(null, arguments);
+    var fragment = fabric.document.createDocumentFragment(), processed;
+    var parts = text.split(separators[separate]), needsAligning = (separate == 'words');
+    if (needsAligning && HAS_BROKEN_REGEXP) {
+      // @todo figure out a better way to do this
+      if (/^\s/.test(text)) parts.unshift('');
+      if (/\s$/.test(text)) parts.push('');
+    }
+    for (var i = 0, l = parts.length; i < l; ++i) {
+      processed = engines[options.engine](font,
+        needsAligning ? CSS.textAlign(parts[i], style, i, l) : parts[i],
+        style, options, node, el, i < l - 1);
+      if (processed) fragment.appendChild(processed);
+    }
+    return fragment;
+  }
+
+  /** @ignore */
+  function replaceElement(el, options) {
+    var font, style, nextNode, redraw;
+    for (var node = attach(el, options).firstChild; node; node = nextNode) {
+      nextNode = node.nextSibling;
+      redraw = false;
+      if (node.nodeType == 1) {
+        if (!node.firstChild) continue;
+        if (!/cufon/.test(node.className)) {
+          arguments.callee(node, options);
+          continue;
+        }
+        else redraw = true;
+      }
+      if (!style) style = CSS.getStyle(el).extend(options);
+      if (!font) font = getFont(el, style);
+
+      if (!font) continue;
+      if (redraw) {
+        engines[options.engine](font, null, style, options, node, el);
+        continue;
+      }
+      var text = node.data;
+      //for some reason, the carriage return is not stripped by IE but "\n" is, so let's keep \r as a new line marker...
+      if (typeof G_vmlCanvasManager != 'undefined') {
+          text = text.replace(/\r/g, "\n");
+      }
+      if (text === '') continue;
+      var processed = process(font, text, style, options, node, el);
+      if (processed) node.parentNode.replaceChild(processed, node);
+      else node.parentNode.removeChild(node);
+    }
+  }
+
+  var HAS_BROKEN_REGEXP = ' '.split(/\s+/).length == 0;
+
+  var sharedStorage = new Storage();
+  var hoverHandler = new HoverHandler();
+  var replaceHistory = [];
+
+  var engines = {}, fonts = {}, defaultOptions = {
+    engine: null,
+    //fontScale: 1,
+    //fontScaling: false,
+    hover: false,
+    hoverables: {
+      a: true
+    },
+    printable: true,
+    //rotation: 0,
+    //selectable: false,
+    selector: (
+        fabric.window.Sizzle
+      ||  (fabric.window.jQuery && function(query) { return jQuery(query); }) // avoid noConflict issues
+      ||  (fabric.window.dojo && dojo.query)
+      ||  (fabric.window.$$ && function(query) { return $$(query); })
+      ||  (fabric.window.$ && function(query) { return $(query); })
+      ||  (fabric.document.querySelectorAll && function(query) { return fabric.document.querySelectorAll(query); })
+      ||  elementsByTagName
+    ),
+    separate: 'words', // 'none' and 'characters' are also accepted
+    textShadow: 'none'
+  };
+
+  var separators = {
+    words: /\s+/,
+    characters: ''
+  };
+
+  /** @ignore */
+  api.now = function() {
+    DOM.ready();
+    return api;
+  };
+
+  /** @ignore */
+  api.refresh = function() {
+    var currentHistory = replaceHistory.splice(0, replaceHistory.length);
+    for (var i = 0, l = currentHistory.length; i < l; ++i) {
+      api.replace.apply(null, currentHistory[i]);
+    }
+    return api;
+  };
+
+  /** @ignore */
+  api.registerEngine = function(id, engine) {
+    if (!engine) return api;
+    engines[id] = engine;
+    return api.set('engine', id);
+  };
+
+  /** @ignore */
+  api.registerFont = function(data) {
+    var font = new Font(data), family = font.family;
+    if (!fonts[family]) fonts[family] = new FontFamily();
+    fonts[family].add(font);
+    return api.set('fontFamily', '"' + family + '"');
+  };
+
+  /** @ignore */
+  api.replace = function(elements, options, ignoreHistory) {
+    options = merge(defaultOptions, options);
+    if (!options.engine) return api; // there's no browser support so we'll just stop here
+    if (typeof options.textShadow == 'string' && options.textShadow)
+      options.textShadow = CSS.textShadow(options.textShadow);
+    if (!ignoreHistory) replaceHistory.push(arguments);
+    if (elements.nodeType || typeof elements == 'string') elements = [ elements ];
+    CSS.ready(function() {
+      for (var i = 0, l = elements.length; i < l; ++i) {
+        var el = elements[i];
+        if (typeof el == 'string') api.replace(options.selector(el), options, true);
+        else replaceElement(el, options);
+      }
+    });
+    return api;
+  };
+
+  /** @ignore */
+  api.replaceElement = function(el, options) {
+    options = merge(defaultOptions, options);
+    if (typeof options.textShadow == 'string' && options.textShadow)
+      options.textShadow = CSS.textShadow(options.textShadow);
+    return replaceElement(el, options);
+  };
+
+  api.engines = engines;
+  api.fonts = fonts;
+  /** @ignore */
+  api.getOptions = function() {
+    return merge(defaultOptions);
+  };
+
+  /** @ignore */
+  api.set = function(option, value) {
+    defaultOptions[option] = value;
+    return api;
+  };
+
+  return api;
+
+})();
+
+Cufon.registerEngine('canvas', (function() {
+
+  // Safari 2 doesn't support .apply() on native methods
+  var HAS_INLINE_BLOCK = Cufon.CSS.supports('display', 'inline-block');
+
+  // Firefox 2 w/ non-strict doctype (almost standards mode)
+  var HAS_BROKEN_LINEHEIGHT = !HAS_INLINE_BLOCK && (fabric.document.compatMode == 'BackCompat' || /frameset|transitional/i.test(fabric.document.doctype.publicId));
+
+  var styleSheet = fabric.document.createElement('style');
+  styleSheet.type = 'text/css';
+
+    var textNode = fabric.document.createTextNode(
+        '.cufon-canvas{text-indent:0}' +
+        '@media screen,projection{' +
+          '.cufon-canvas{display:inline;display:inline-block;position:relative;vertical-align:middle' +
+          (HAS_BROKEN_LINEHEIGHT
+            ? ''
+            : ';font-size:1px;line-height:1px') +
+          '}.cufon-canvas .cufon-alt{display:-moz-inline-box;display:inline-block;width:0;height:0;overflow:hidden}' +
+          (HAS_INLINE_BLOCK
+            ? '.cufon-canvas canvas{position:relative}'
+            : '.cufon-canvas canvas{position:absolute}') +
+        '}' +
+        '@media print{' +
+          '.cufon-canvas{padding:0 !important}' +
+          '.cufon-canvas canvas{display:none}' +
+          '.cufon-canvas .cufon-alt{display:inline}' +
+        '}'
+      )
+
+  try {
+      styleSheet.appendChild(textNode);
+  } catch(e) {
+      //IE8- can't do this...
+      styleSheet.setAttribute("type", "text/css");
+      styleSheet.styleSheet.cssText = textNode.data;
+  }
+  fabric.document.getElementsByTagName('head')[0].appendChild(styleSheet);
+
+  function generateFromVML(path, context) {
+    var atX = 0, atY = 0;
+    var code = [], re = /([mrvxe])([^a-z]*)/g, match;
+    generate: for (var i = 0; match = re.exec(path); ++i) {
+      var c = match[2].split(',');
+      switch (match[1]) {
+        case 'v':
+          code[i] = { m: 'bezierCurveTo', a: [ atX + ~~c[0], atY + ~~c[1], atX + ~~c[2], atY + ~~c[3], atX += ~~c[4], atY += ~~c[5] ] };
+          break;
+        case 'r':
+          code[i] = { m: 'lineTo', a: [ atX += ~~c[0], atY += ~~c[1] ] };
+          break;
+        case 'm':
+          code[i] = { m: 'moveTo', a: [ atX = ~~c[0], atY = ~~c[1] ] };
+          break;
+        case 'x':
+          code[i] = { m: 'closePath', a: [] };
+          break;
+        case 'e':
+          break generate;
+      }
+      context[code[i].m].apply(context, code[i].a);
+    }
+    return code;
+  }
+
+  function interpret(code, context) {
+    for (var i = 0, l = code.length; i < l; ++i) {
+      var line = code[i];
+      context[line.m].apply(context, line.a);
+    }
+  }
+
+  return function(font, text, style, options, node, el) {
+
+    var redraw = (text === null);
+
+    var viewBox = font.viewBox;
+
+    var size = style.getSize('fontSize', font.baseSize);
+
+    var letterSpacing = style.get('letterSpacing');
+    letterSpacing = (letterSpacing == 'normal') ? 0 : size.convertFrom(parseInt(letterSpacing, 10));
+
+    var expandTop = 0, expandRight = 0, expandBottom = 0, expandLeft = 0;
+    var shadows = options.textShadow, shadowOffsets = [];
+
+    Cufon.textOptions.shadowOffsets = [ ];
+    Cufon.textOptions.shadows = null;
+
+    if (shadows) {
+      Cufon.textOptions.shadows = shadows;
+      for (var i = 0, l = shadows.length; i < l; ++i) {
+        var shadow = shadows[i];
+        var x = size.convertFrom(parseFloat(shadow.offX));
+        var y = size.convertFrom(parseFloat(shadow.offY));
+        shadowOffsets[i] = [ x, y ];
+        //if (y < expandTop) expandTop = y;
+        //if (x > expandRight) expandRight = x;
+        //if (y > expandBottom) expandBottom = y;
+        //if (x < expandLeft) expandLeft = x;
+      }
+    }
+
+    var chars = Cufon.CSS.textTransform(redraw ? node.alt : text, style).split('');
+
+    var width = 0, lastWidth = null;
+
+    var maxWidth = 0, lines = 1, lineWidths = [ ];
+    for (var i = 0, l = chars.length; i < l; ++i) {
+      if (chars[i] === '\n') {
+        lines++;
+        if (width > maxWidth) {
+          maxWidth = width;
+        }
+        lineWidths.push(width);
+        width = 0;
+        continue;
+      }
+      var glyph = font.glyphs[chars[i]] || font.missingGlyph;
+      if (!glyph) continue;
+      width += lastWidth = Number(glyph.w || font.w) + letterSpacing;
+    }
+    lineWidths.push(width);
+
+    width = Math.max(maxWidth, width);
+
+    var lineOffsets = [ ];
+    for (var i = lineWidths.length; i--; ) {
+      lineOffsets[i] = width - lineWidths[i];
+    }
+
+    if (lastWidth === null) return null; // there's nothing to render
+
+    expandRight += (viewBox.width - lastWidth);
+    expandLeft += viewBox.minX;
+
+    var wrapper, canvas;
+
+    if (redraw) {
+      wrapper = node;
+      canvas = node.firstChild;
+    }
+    else {
+      wrapper = fabric.document.createElement('span');
+      wrapper.className = 'cufon cufon-canvas';
+      wrapper.alt = text;
+
+      canvas = fabric.document.createElement('canvas');
+      wrapper.appendChild(canvas);
+
+      if (options.printable) {
+        var print = fabric.document.createElement('span');
+        print.className = 'cufon-alt';
+        print.appendChild(fabric.document.createTextNode(text));
+        wrapper.appendChild(print);
+      }
+    }
+
+    var wStyle = wrapper.style;
+    var cStyle = canvas.style || { };
+
+    var height = size.convert(viewBox.height - expandTop + expandBottom);
+    var roundedHeight = Math.ceil(height);
+    var roundingFactor = roundedHeight / height;
+
+    canvas.width = Math.ceil(size.convert(width + expandRight - expandLeft) * roundingFactor);
+    canvas.height = roundedHeight;
+
+    expandTop += viewBox.minY;
+
+    cStyle.top = Math.round(size.convert(expandTop - font.ascent)) + 'px';
+    cStyle.left = Math.round(size.convert(expandLeft)) + 'px';
+
+    var _width = Math.ceil(size.convert(width * roundingFactor));
+    var wrapperWidth = _width + 'px';
+    var _height = size.convert(font.height);
+    var totalLineHeight = (options.lineHeight - 1) * size.convert(-font.ascent / 5) * (lines - 1);
+
+    Cufon.textOptions.width = _width;
+    Cufon.textOptions.height = (_height * lines) + totalLineHeight;
+    Cufon.textOptions.lines = lines;
+    Cufon.textOptions.totalLineHeight = totalLineHeight;
+
+    if (HAS_INLINE_BLOCK) {
+      wStyle.width = wrapperWidth;
+      wStyle.height = _height + 'px';
+    }
+    else {
+      wStyle.paddingLeft = wrapperWidth;
+      wStyle.paddingBottom = (_height - 1) + 'px';
+    }
+
+    var g = Cufon.textOptions.context || canvas.getContext('2d'),
+        scale = roundedHeight / viewBox.height;
+
+    Cufon.textOptions.fontAscent = font.ascent * scale;
+    Cufon.textOptions.boundaries = null;
+
+    for (var offsets = Cufon.textOptions.shadowOffsets, i = shadowOffsets.length; i--; ) {
+      offsets[i] = [ shadowOffsets[i][0] * scale, shadowOffsets[i][1] * scale ];
+    }
+
+    g.save();
+    g.scale(scale, scale);
+
+    g.translate(
+      // we're at the center of an object and need to jump to the top left corner
+      // where first character is to be drawn
+      -expandLeft - ((1/scale * canvas.width) / 2) + (Cufon.fonts[font.family].offsetLeft || 0),
+      -expandTop - ((Cufon.textOptions.height / scale) / 2) + (Cufon.fonts[font.family].offsetTop || 0)
+    );
+
+    g.lineWidth = font.face['underline-thickness'];
+
+    g.save();
+
+    function line(y, color) {
+      g.strokeStyle = color;
+
+      g.beginPath();
+
+      g.moveTo(0, y);
+      g.lineTo(width, y);
+
+      g.stroke();
+    }
+
+    var textDecoration = Cufon.getTextDecoration(options),
+        isItalic = options.fontStyle === 'italic';
+
+    function renderBackground() {
+      g.save();
+
+      var left = 0, lineNum = 0, boundaries = [{ left: 0 }];
+
+      if (options.backgroundColor) {
+        g.save();
+        g.fillStyle = options.backgroundColor;
+        g.translate(0, font.ascent);
+        g.fillRect(0, 0, width + 10, (-font.ascent + font.descent) * lines);
+        g.restore();
+      }
+
+      if (options.textAlign === 'right') {
+        g.translate(lineOffsets[lineNum], 0);
+        boundaries[0].left = lineOffsets[lineNum] * scale;
+      }
+      else if (options.textAlign === 'center') {
+        g.translate(lineOffsets[lineNum] / 2, 0);
+        boundaries[0].left = lineOffsets[lineNum] / 2 * scale;
+      }
+
+      for (var i = 0, l = chars.length; i < l; ++i) {
+        if (chars[i] === '\n') {
+
+          lineNum++;
+
+          var topOffset = -font.ascent - ((font.ascent / 5) * options.lineHeight);
+          var boundary = boundaries[boundaries.length - 1];
+          var nextBoundary = { left: 0 };
+
+          boundary.width = left * scale;
+          boundary.height = (-font.ascent + font.descent) * scale;
+
+          if (options.textAlign === 'right') {
+            g.translate(-width, topOffset);
+            g.translate(lineOffsets[lineNum], 0);
+            nextBoundary.left = lineOffsets[lineNum] * scale;
+          }
+          else if (options.textAlign === 'center') {
+            // offset to the start of text in previous line AND half of its offset
+            // (essentially moving caret to the left edge of bounding box)
+            g.translate(-left - (lineOffsets[lineNum - 1] / 2), topOffset);
+            g.translate(lineOffsets[lineNum] / 2, 0);
+            nextBoundary.left = lineOffsets[lineNum] / 2 * scale;
+          }
+          else {
+            g.translate(-left, topOffset);
+          }
+
+          /* push next boundary (for the next line) */
+          boundaries.push(nextBoundary);
+
+          left = 0;
+
+          continue;
+        }
+        var glyph = font.glyphs[chars[i]] || font.missingGlyph;
+        if (!glyph) continue;
+
+        var charWidth = Number(glyph.w || font.w) + letterSpacing;
+
+        // only draw text-background when there's some kind of value
+        if (options.textBackgroundColor) {
+          g.save();
+          g.fillStyle = options.textBackgroundColor;
+          g.translate(0, font.ascent);
+          g.fillRect(0, 0, charWidth + 10, -font.ascent + font.descent);
+          g.restore();
+        }
+
+        g.translate(charWidth, 0);
+        left += charWidth;
+
+        if (i == l-1) {
+          boundaries[boundaries.length - 1].width = left * scale;
+          boundaries[boundaries.length - 1].height = (-font.ascent + font.descent) * scale;
+        }
+      }
+      g.restore();
+
+      Cufon.textOptions.boundaries = boundaries;
+    }
+
+    function renderText(color) {
+      g.fillStyle = color || Cufon.textOptions.color || style.get('color');
+
+      var left = 0, lineNum = 0;
+
+      if (options.textAlign === 'right') {
+        g.translate(lineOffsets[lineNum], 0);
+      }
+      else if (options.textAlign === 'center') {
+        g.translate(lineOffsets[lineNum] / 2, 0);
+      }
+
+      for (var i = 0, l = chars.length; i < l; ++i) {
+        if (chars[i] === '\n') {
+
+          lineNum++;
+
+          var topOffset = -font.ascent - ((font.ascent / 5) * options.lineHeight);
+
+          if (options.textAlign === 'right') {
+            g.translate(-width, topOffset);
+            g.translate(lineOffsets[lineNum], 0);
+          }
+          else if (options.textAlign === 'center') {
+            // offset to the start of text in previous line AND half of its offset
+            // (essentially moving caret to the left edge of bounding box)
+            g.translate(-left - (lineOffsets[lineNum - 1] / 2), topOffset);
+            g.translate(lineOffsets[lineNum] / 2, 0);
+          }
+          else {
+            g.translate(-left, topOffset);
+          }
+
+          left = 0;
+
+          continue;
+        }
+        var glyph = font.glyphs[chars[i]] || font.missingGlyph;
+        if (!glyph) continue;
+
+        var charWidth = Number(glyph.w || font.w) + letterSpacing;
+
+        if (textDecoration) {
+          g.save();
+          g.strokeStyle = g.fillStyle;
+
+          // add 2x more thickness — closer to SVG rendering
+          g.lineWidth += g.lineWidth;
+
+          g.beginPath();
+          if (textDecoration.underline) {
+            g.moveTo(0, -font.face['underline-position'] + 0.5);
+            g.lineTo(charWidth, -font.face['underline-position'] + 0.5);
+          }
+          if (textDecoration.overline) {
+            g.moveTo(0, font.ascent + 0.5);
+            g.lineTo(charWidth, font.ascent + 0.5);
+          }
+          if (textDecoration['line-through']) {
+            g.moveTo(0, -font.descent + 0.5);
+            g.lineTo(charWidth, -font.descent + 0.5);
+          }
+          g.stroke();
+          g.restore();
+        }
+
+        if (isItalic) {
+          g.save();
+          g.transform(1, 0, -0.25, 1, 0, 0);
+        }
+
+        g.beginPath();
+        if (glyph.d) {
+          if (glyph.code) interpret(glyph.code, g);
+          else glyph.code = generateFromVML('m' + glyph.d, g);
+        }
+
+        g.fill();
+
+        if (options.strokeStyle) {
+          g.closePath();
+          g.save();
+          g.lineWidth = options.strokeWidth;
+          g.strokeStyle = options.strokeStyle;
+          g.stroke();
+          g.restore();
+        }
+
+        if (isItalic) {
+          g.restore();
+        }
+
+        g.translate(charWidth, 0);
+        left += charWidth;
+      }
+    }
+
+    g.save();
+    renderBackground();
+    if (shadows) {
+      for (var i = 0, l = shadows.length; i < l; ++i) {
+        var shadow = shadows[i];
+        g.save();
+        g.translate.apply(g, shadowOffsets[i]);
+        renderText(shadow.color);
+        g.restore();
+      }
+    }
+    renderText();
+    g.restore();
+    g.restore();
+    g.restore();
+
+    return wrapper;
+
+  };
+
+})());
+
+Cufon.registerEngine('vml', (function() {
+
+  if (!fabric.document.namespaces) return;
+
+  var canvasEl = fabric.document.createElement('canvas');
+  if (canvasEl && canvasEl.getContext && canvasEl.getContext.apply) return;
+
+  if (fabric.document.namespaces.cvml == null) {
+    fabric.document.namespaces.add('cvml', 'urn:schemas-microsoft-com:vml');
+  }
+
+  var check = fabric.document.createElement('cvml:shape');
+  check.style.behavior = 'url(#default#VML)';
+  if (!check.coordsize) return; // VML isn't supported
+  check = null;
+
+  fabric.document.write('<style type="text/css">' +
+    '.cufon-vml-canvas{text-indent:0}' +
+    '@media screen{' +
+      'cvml\\:shape,cvml\\:shadow{behavior:url(#default#VML);display:block;antialias:true;position:absolute}' +
+      '.cufon-vml-canvas{position:absolute;text-align:left}' +
+      '.cufon-vml{display:inline-block;position:relative;vertical-align:middle}' +
+      '.cufon-vml .cufon-alt{position:absolute;left:-10000in;font-size:1px}' +
+      'a .cufon-vml{cursor:pointer}' +
+    '}' +
+    '@media print{' +
+      '.cufon-vml *{display:none}' +
+      '.cufon-vml .cufon-alt{display:inline}' +
+    '}' +
+  '</style>');
+
+  function getFontSizeInPixels(el, value) {
+    return getSizeInPixels(el, /(?:em|ex|%)$/i.test(value) ? '1em' : value);
+  }
+
+  // Original by Dead Edwards.
+  // Combined with getFontSizeInPixels it also works with relative units.
+  function getSizeInPixels(el, value) {
+    if (/px$/i.test(value)) return parseFloat(value);
+    var style = el.style.left, runtimeStyle = el.runtimeStyle.left;
+    el.runtimeStyle.left = el.currentStyle.left;
+    el.style.left = value;
+    var result = el.style.pixelLeft;
+    el.style.left = style;
+    el.runtimeStyle.left = runtimeStyle;
+    return result;
+  }
+
+  return function(font, text, style, options, node, el, hasNext) {
+    var redraw = (text === null);
+
+    if (redraw) text = node.alt;
+
+    // @todo word-spacing, text-decoration
+
+    var viewBox = font.viewBox;
+
+    var size = style.computedFontSize ||
+      (style.computedFontSize = new Cufon.CSS.Size(getFontSizeInPixels(el, style.get('fontSize')) + 'px', font.baseSize));
+
+    var letterSpacing = style.computedLSpacing;
+
+    if (letterSpacing == undefined) {
+      letterSpacing = style.get('letterSpacing');
+      style.computedLSpacing = letterSpacing =
+        (letterSpacing == 'normal') ? 0 : ~~size.convertFrom(getSizeInPixels(el, letterSpacing));
+    }
+
+    var wrapper, canvas;
+
+    if (redraw) {
+      wrapper = node;
+      canvas = node.firstChild;
+    }
+    else {
+      wrapper = fabric.document.createElement('span');
+      wrapper.className = 'cufon cufon-vml';
+      wrapper.alt = text;
+
+      canvas = fabric.document.createElement('span');
+      canvas.className = 'cufon-vml-canvas';
+      wrapper.appendChild(canvas);
+
+      if (options.printable) {
+        var print = fabric.document.createElement('span');
+        print.className = 'cufon-alt';
+        print.appendChild(fabric.document.createTextNode(text));
+        wrapper.appendChild(print);
+      }
+
+      // ie6, for some reason, has trouble rendering the last VML element in the document.
+      // we can work around this by injecting a dummy element where needed.
+      // @todo find a better solution
+      if (!hasNext) wrapper.appendChild(fabric.document.createElement('cvml:shape'));
+    }
+
+    var wStyle = wrapper.style;
+    var cStyle = canvas.style;
+
+    var height = size.convert(viewBox.height), roundedHeight = Math.ceil(height);
+    var roundingFactor = roundedHeight / height;
+    var minX = viewBox.minX, minY = viewBox.minY;
+
+    cStyle.height = roundedHeight;
+    cStyle.top = Math.round(size.convert(minY - font.ascent));
+    cStyle.left = Math.round(size.convert(minX));
+
+    wStyle.height = size.convert(font.height) + 'px';
+
+    var textDecoration = Cufon.getTextDecoration(options);
+
+    var color = style.get('color');
+
+    var chars = Cufon.CSS.textTransform(text, style).split('');
+
+    var width = 0, offsetX = 0, advance = null;
+
+    var glyph, shape, shadows = options.textShadow;
+
+    // pre-calculate width
+    for (var i = 0, k = 0, l = chars.length; i < l; ++i) {
+      glyph = font.glyphs[chars[i]] || font.missingGlyph;
+      if (glyph) width += advance = ~~(glyph.w || font.w) + letterSpacing;
+    }
+
+    if (advance === null) return null;
+
+    var fullWidth = -minX + width + (viewBox.width - advance);
+
+    var shapeWidth = size.convert(fullWidth * roundingFactor), roundedShapeWidth = Math.round(shapeWidth);
+
+    var coordSize = fullWidth + ',' + viewBox.height, coordOrigin;
+    var stretch = 'r' + coordSize + 'nsnf';
+
+    for (i = 0; i < l; ++i) {
+
+      glyph = font.glyphs[chars[i]] || font.missingGlyph;
+      if (!glyph) continue;
+
+      if (redraw) {
+        // some glyphs may be missing so we can't use i
+        shape = canvas.childNodes[k];
+        if (shape.firstChild) shape.removeChild(shape.firstChild); // shadow
+      }
+      else {
+        shape = fabric.document.createElement('cvml:shape');
+        canvas.appendChild(shape);
+      }
+
+      shape.stroked = 'f';
+      shape.coordsize = coordSize;
+      shape.coordorigin = coordOrigin = (minX - offsetX) + ',' + minY;
+      shape.path = (glyph.d ? 'm' + glyph.d + 'xe' : '') + 'm' + coordOrigin + stretch;
+      shape.fillcolor = color;
+
+      // it's important to not set top/left or IE8 will grind to a halt
+      var sStyle = shape.style;
+      sStyle.width = roundedShapeWidth;
+      sStyle.height = roundedHeight;
+
+      if (shadows) {
+        // due to the limitations of the VML shadow element there
+        // can only be two visible shadows. opacity is shared
+        // for all shadows.
+        var shadow1 = shadows[0], shadow2 = shadows[1];
+        var color1 = Cufon.CSS.color(shadow1.color), color2;
+        var shadow = fabric.document.createElement('cvml:shadow');
+        shadow.on = 't';
+        shadow.color = color1.color;
+        shadow.offset = shadow1.offX + ',' + shadow1.offY;
+        if (shadow2) {
+          color2 = Cufon.CSS.color(shadow2.color);
+          shadow.type = 'double';
+          shadow.color2 = color2.color;
+          shadow.offset2 = shadow2.offX + ',' + shadow2.offY;
+        }
+        shadow.opacity = color1.opacity || (color2 && color2.opacity) || 1;
+        shape.appendChild(shadow);
+      }
+
+      offsetX += ~~(glyph.w || font.w) + letterSpacing;
+
+      ++k;
+
+    }
+
+    wStyle.width = Math.max(Math.ceil(size.convert(width * roundingFactor)), 0);
+
+    return wrapper;
+
+  };
+
+})());
+
+Cufon.getTextDecoration = function(options) {
+  return {
+    underline: options.textDecoration === 'underline',
+    overline: options.textDecoration === 'overline',
+    'line-through': options.textDecoration === 'line-through'
+  };
+};
+
+if (typeof exports != 'undefined') {
+  exports.Cufon = Cufon;
+}
+
+
+/*
+    json2.js
+    2014-02-04
+
+    Public Domain.
+
+    NO WARRANTY EXPRESSED OR IMPLIED. USE AT YOUR OWN RISK.
+
+    See http://www.JSON.org/js.html
+
+
+    This code should be minified before deployment.
+    See http://javascript.crockford.com/jsmin.html
+
+    USE YOUR OWN COPY. IT IS EXTREMELY UNWISE TO LOAD CODE FROM SERVERS YOU DO
+    NOT CONTROL.
+
+
+    This file creates a global JSON object containing two methods: stringify
+    and parse.
+
+        JSON.stringify(value, replacer, space)
+            value       any JavaScript value, usually an object or array.
+
+            replacer    an optional parameter that determines how object
+                        values are stringified for objects. It can be a
+                        function or an array of strings.
+
+            space       an optional parameter that specifies the indentation
+                        of nested structures. If it is omitted, the text will
+                        be packed without extra whitespace. If it is a number,
+                        it will specify the number of spaces to indent at each
+                        level. If it is a string (such as '\t' or '&nbsp;'),
+                        it contains the characters used to indent at each level.
+
+            This method produces a JSON text from a JavaScript value.
+
+            When an object value is found, if the object contains a toJSON
+            method, its toJSON method will be called and the result will be
+            stringified. A toJSON method does not serialize: it returns the
+            value represented by the name/value pair that should be serialized,
+            or undefined if nothing should be serialized. The toJSON method
+            will be passed the key associated with the value, and this will be
+            bound to the value
+
+            For example, this would serialize Dates as ISO strings.
+
+                Date.prototype.toJSON = function (key) {
+                    function f(n) {
+                        // Format integers to have at least two digits.
+                        return n < 10 ? '0' + n : n;
+                    }
+
+                    return this.getUTCFullYear()   + '-' +
+                         f(this.getUTCMonth() + 1) + '-' +
+                         f(this.getUTCDate())      + 'T' +
+                         f(this.getUTCHours())     + ':' +
+                         f(this.getUTCMinutes())   + ':' +
+                         f(this.getUTCSeconds())   + 'Z';
+                };
+
+            You can provide an optional replacer method. It will be passed the
+            key and value of each member, with this bound to the containing
+            object. The value that is returned from your method will be
+            serialized. If your method returns undefined, then the member will
+            be excluded from the serialization.
+
+            If the replacer parameter is an array of strings, then it will be
+            used to select the members to be serialized. It filters the results
+            such that only members with keys listed in the replacer array are
+            stringified.
+
+            Values that do not have JSON representations, such as undefined or
+            functions, will not be serialized. Such values in objects will be
+            dropped; in arrays they will be replaced with null. You can use
+            a replacer function to replace those with JSON values.
+            JSON.stringify(undefined) returns undefined.
+
+            The optional space parameter produces a stringification of the
+            value that is filled with line breaks and indentation to make it
+            easier to read.
+
+            If the space parameter is a non-empty string, then that string will
+            be used for indentation. If the space parameter is a number, then
+            the indentation will be that many spaces.
+
+            Example:
+
+            text = JSON.stringify(['e', {pluribus: 'unum'}]);
+            // text is '["e",{"pluribus":"unum"}]'
+
+
+            text = JSON.stringify(['e', {pluribus: 'unum'}], null, '\t');
+            // text is '[\n\t"e",\n\t{\n\t\t"pluribus": "unum"\n\t}\n]'
+
+            text = JSON.stringify([new Date()], function (key, value) {
+                return this[key] instanceof Date ?
+                    'Date(' + this[key] + ')' : value;
+            });
+            // text is '["Date(---current time---)"]'
+
+
+        JSON.parse(text, reviver)
+            This method parses a JSON text to produce an object or array.
+            It can throw a SyntaxError exception.
+
+            The optional reviver parameter is a function that can filter and
+            transform the results. It receives each of the keys and values,
+            and its return value is used instead of the original value.
+            If it returns what it received, then the structure is not modified.
+            If it returns undefined then the member is deleted.
+
+            Example:
+
+            // Parse the text. Values that look like ISO date strings will
+            // be converted to Date objects.
+
+            myData = JSON.parse(text, function (key, value) {
+                var a;
+                if (typeof value === 'string') {
+                    a =
+/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2}(?:\.\d*)?)Z$/.exec(value);
+                    if (a) {
+                        return new Date(Date.UTC(+a[1], +a[2] - 1, +a[3], +a[4],
+                            +a[5], +a[6]));
+                    }
+                }
+                return value;
+            });
+
+            myData = JSON.parse('["Date(09/09/2001)"]', function (key, value) {
+                var d;
+                if (typeof value === 'string' &&
+                        value.slice(0, 5) === 'Date(' &&
+                        value.slice(-1) === ')') {
+                    d = new Date(value.slice(5, -1));
+                    if (d) {
+                        return d;
+                    }
+                }
+                return value;
+            });
+
+
+    This is a reference implementation. You are free to copy, modify, or
+    redistribute.
+*/
+
+/*jslint evil: true, regexp: true */
+
+/*members "", "\b", "\t", "\n", "\f", "\r", "\"", JSON, "\\", apply,
+    call, charCodeAt, getUTCDate, getUTCFullYear, getUTCHours,
+    getUTCMinutes, getUTCMonth, getUTCSeconds, hasOwnProperty, join,
+    lastIndex, length, parse, prototype, push, replace, slice, stringify,
+    test, toJSON, toString, valueOf
+*/
+
+
+// Create a JSON object only if one does not already exist. We create the
+// methods in a closure to avoid creating global variables.
+
+if (typeof JSON !== 'object') {
+    JSON = {};
+}
+
+(function () {
+    'use strict';
+
+    function f(n) {
+        // Format integers to have at least two digits.
+        return n < 10 ? '0' + n : n;
+    }
+
+    if (typeof Date.prototype.toJSON !== 'function') {
+
+        Date.prototype.toJSON = function () {
+
+            return isFinite(this.valueOf())
+                ? this.getUTCFullYear()     + '-' +
+                    f(this.getUTCMonth() + 1) + '-' +
+                    f(this.getUTCDate())      + 'T' +
+                    f(this.getUTCHours())     + ':' +
+                    f(this.getUTCMinutes())   + ':' +
+                    f(this.getUTCSeconds())   + 'Z'
+                : null;
+        };
+
+        String.prototype.toJSON      =
+            Number.prototype.toJSON  =
+            Boolean.prototype.toJSON = function () {
+                return this.valueOf();
+            };
+    }
+
+    var cx,
+        escapable,
+        gap,
+        indent,
+        meta,
+        rep;
+
+
+    function quote(string) {
+
+// If the string contains no control characters, no quote characters, and no
+// backslash characters, then we can safely slap some quotes around it.
+// Otherwise we must also replace the offending characters with safe escape
+// sequences.
+
+        escapable.lastIndex = 0;
+        return escapable.test(string) ? '"' + string.replace(escapable, function (a) {
+            var c = meta[a];
+            return typeof c === 'string'
+                ? c
+                : '\\u' + ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
+        }) + '"' : '"' + string + '"';
+    }
+
+
+    function str(key, holder) {
+
+// Produce a string from holder[key].
+
+        var i,          // The loop counter.
+            k,          // The member key.
+            v,          // The member value.
+            length,
+            mind = gap,
+            partial,
+            value = holder[key];
+
+// If the value has a toJSON method, call it to obtain a replacement value.
+
+        if (value && typeof value === 'object' &&
+                typeof value.toJSON === 'function') {
+            value = value.toJSON(key);
+        }
+
+// If we were called with a replacer function, then call the replacer to
+// obtain a replacement value.
+
+        if (typeof rep === 'function') {
+            value = rep.call(holder, key, value);
+        }
+
+// What happens next depends on the value's type.
+
+        switch (typeof value) {
+        case 'string':
+            return quote(value);
+
+        case 'number':
+
+// JSON numbers must be finite. Encode non-finite numbers as null.
+
+            return isFinite(value) ? String(value) : 'null';
+
+        case 'boolean':
+        case 'null':
+
+// If the value is a boolean or null, convert it to a string. Note:
+// typeof null does not produce 'null'. The case is included here in
+// the remote chance that this gets fixed someday.
+
+            return String(value);
+
+// If the type is 'object', we might be dealing with an object or an array or
+// null.
+
+        case 'object':
+
+// Due to a specification blunder in ECMAScript, typeof null is 'object',
+// so watch out for that case.
+
+            if (!value) {
+                return 'null';
+            }
+
+// Make an array to hold the partial results of stringifying this object value.
+
+            gap += indent;
+            partial = [];
+
+// Is the value an array?
+
+            if (Object.prototype.toString.apply(value) === '[object Array]') {
+
+// The value is an array. Stringify every element. Use null as a placeholder
+// for non-JSON values.
+
+                length = value.length;
+                for (i = 0; i < length; i += 1) {
+                    partial[i] = str(i, value) || 'null';
+                }
+
+// Join all of the elements together, separated with commas, and wrap them in
+// brackets.
+
+                v = partial.length === 0
+                    ? '[]'
+                    : gap
+                    ? '[\n' + gap + partial.join(',\n' + gap) + '\n' + mind + ']'
+                    : '[' + partial.join(',') + ']';
+                gap = mind;
+                return v;
+            }
+
+// If the replacer is an array, use it to select the members to be stringified.
+
+            if (rep && typeof rep === 'object') {
+                length = rep.length;
+                for (i = 0; i < length; i += 1) {
+                    if (typeof rep[i] === 'string') {
+                        k = rep[i];
+                        v = str(k, value);
+                        if (v) {
+                            partial.push(quote(k) + (gap ? ': ' : ':') + v);
+                        }
+                    }
+                }
+            } else {
+
+// Otherwise, iterate through all of the keys in the object.
+
+                for (k in value) {
+                    if (Object.prototype.hasOwnProperty.call(value, k)) {
+                        v = str(k, value);
+                        if (v) {
+                            partial.push(quote(k) + (gap ? ': ' : ':') + v);
+                        }
+                    }
+                }
+            }
+
+// Join all of the member texts together, separated with commas,
+// and wrap them in braces.
+
+            v = partial.length === 0
+                ? '{}'
+                : gap
+                ? '{\n' + gap + partial.join(',\n' + gap) + '\n' + mind + '}'
+                : '{' + partial.join(',') + '}';
+            gap = mind;
+            return v;
+        }
+    }
+
+// If the JSON object does not yet have a stringify method, give it one.
+
+    if (typeof JSON.stringify !== 'function') {
+        escapable = /[\\\"\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g;
+        meta = {    // table of character substitutions
+            '\b': '\\b',
+            '\t': '\\t',
+            '\n': '\\n',
+            '\f': '\\f',
+            '\r': '\\r',
+            '"' : '\\"',
+            '\\': '\\\\'
+        };
+        JSON.stringify = function (value, replacer, space) {
+
+// The stringify method takes a value and an optional replacer, and an optional
+// space parameter, and returns a JSON text. The replacer can be a function
+// that can replace values, or an array of strings that will select the keys.
+// A default replacer method can be provided. Use of the space parameter can
+// produce text that is more easily readable.
+
+            var i;
+            gap = '';
+            indent = '';
+
+// If the space parameter is a number, make an indent string containing that
+// many spaces.
+
+            if (typeof space === 'number') {
+                for (i = 0; i < space; i += 1) {
+                    indent += ' ';
+                }
+
+// If the space parameter is a string, it will be used as the indent string.
+
+            } else if (typeof space === 'string') {
+                indent = space;
+            }
+
+// If there is a replacer, it must be a function or an array.
+// Otherwise, throw an error.
+
+            rep = replacer;
+            if (replacer && typeof replacer !== 'function' &&
+                    (typeof replacer !== 'object' ||
+                    typeof replacer.length !== 'number')) {
+                throw new Error('JSON.stringify');
+            }
+
+// Make a fake root object containing our value under the key of ''.
+// Return the result of stringifying the value.
+
+            return str('', {'': value});
+        };
+    }
+
+
+// If the JSON object does not yet have a parse method, give it one.
+
+    if (typeof JSON.parse !== 'function') {
+        cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g;
+        JSON.parse = function (text, reviver) {
+
+// The parse method takes a text and an optional reviver function, and returns
+// a JavaScript value if the text is a valid JSON text.
+
+            var j;
+
+            function walk(holder, key) {
+
+// The walk method is used to recursively walk the resulting structure so
+// that modifications can be made.
+
+                var k, v, value = holder[key];
+                if (value && typeof value === 'object') {
+                    for (k in value) {
+                        if (Object.prototype.hasOwnProperty.call(value, k)) {
+                            v = walk(value, k);
+                            if (v !== undefined) {
+                                value[k] = v;
+                            } else {
+                                delete value[k];
+                            }
+                        }
+                    }
+                }
+                return reviver.call(holder, key, value);
+            }
+
+
+// Parsing happens in four stages. In the first stage, we replace certain
+// Unicode characters with escape sequences. JavaScript handles many characters
+// incorrectly, either silently deleting them, or treating them as line endings.
+
+            text = String(text);
+            cx.lastIndex = 0;
+            if (cx.test(text)) {
+                text = text.replace(cx, function (a) {
+                    return '\\u' +
+                        ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
+                });
+            }
+
+// In the second stage, we run the text against regular expressions that look
+// for non-JSON patterns. We are especially concerned with '()' and 'new'
+// because they can cause invocation, and '=' because it can cause mutation.
+// But just to be safe, we want to reject all unexpected forms.
+
+// We split the second stage into 4 regexp operations in order to work around
+// crippling inefficiencies in IE's and Safari's regexp engines. First we
+// replace the JSON backslash pairs with '@' (a non-JSON character). Second, we
+// replace all simple value tokens with ']' characters. Third, we delete all
+// open brackets that follow a colon or comma or that begin the text. Finally,
+// we look to see that the remaining characters are only whitespace or ']' or
+// ',' or ':' or '{' or '}'. If that is so, then the text is safe for eval.
+
+            if (/^[\],:{}\s]*$/
+                    .test(text.replace(/\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g, '@')
+                        .replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']')
+                        .replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
+
+// In the third stage we use the eval function to compile the text into a
+// JavaScript structure. The '{' operator is subject to a syntactic ambiguity
+// in JavaScript: it can begin a block or an object literal. We wrap the text
+// in parens to eliminate the ambiguity.
+
+                j = eval('(' + text + ')');
+
+// In the optional fourth stage, we recursively walk the new structure, passing
+// each name/value pair to a reviver function for possible transformation.
+
+                return typeof reviver === 'function'
+                    ? walk({'': j}, '')
+                    : j;
+            }
+
+// If the text is not JSON parseable, then a SyntaxError is thrown.
+
+            throw new SyntaxError('JSON.parse');
+        };
+    }
+}());
+
+
+/*! Hammer.JS - v2.0.4 - 2014-09-28
+ * http://hammerjs.github.io/
+ *
+ * Copyright (c) 2014 Jorik Tangelder;
+ * Licensed under the MIT license */
+(function(window, document, exportName, undefined) {
+  'use strict';
+
+var VENDOR_PREFIXES = ['', 'webkit', 'moz', 'MS', 'ms', 'o'];
+var TEST_ELEMENT = document.createElement('div');
+
+var TYPE_FUNCTION = 'function';
+
+var round = Math.round;
+var abs = Math.abs;
+var now = Date.now;
+
+/**
+ * set a timeout with a given scope
+ * @param {Function} fn
+ * @param {Number} timeout
+ * @param {Object} context
+ * @returns {number}
+ */
+function setTimeoutContext(fn, timeout, context) {
+    return setTimeout(bindFn(fn, context), timeout);
+}
+
+/**
+ * if the argument is an array, we want to execute the fn on each entry
+ * if it aint an array we don't want to do a thing.
+ * this is used by all the methods that accept a single and array argument.
+ * @param {*|Array} arg
+ * @param {String} fn
+ * @param {Object} [context]
+ * @returns {Boolean}
+ */
+function invokeArrayArg(arg, fn, context) {
+    if (Array.isArray(arg)) {
+        each(arg, context[fn], context);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * walk objects and arrays
+ * @param {Object} obj
+ * @param {Function} iterator
+ * @param {Object} context
+ */
+function each(obj, iterator, context) {
+    var i;
+
+    if (!obj) {
+        return;
+    }
+
+    if (obj.forEach) {
+        obj.forEach(iterator, context);
+    } else if (obj.length !== undefined) {
+        i = 0;
+        while (i < obj.length) {
+            iterator.call(context, obj[i], i, obj);
+            i++;
+        }
+    } else {
+        for (i in obj) {
+            obj.hasOwnProperty(i) && iterator.call(context, obj[i], i, obj);
+        }
+    }
+}
+
+/**
+ * extend object.
+ * means that properties in dest will be overwritten by the ones in src.
+ * @param {Object} dest
+ * @param {Object} src
+ * @param {Boolean} [merge]
+ * @returns {Object} dest
+ */
+function extend(dest, src, merge) {
+    var keys = Object.keys(src);
+    var i = 0;
+    while (i < keys.length) {
+        if (!merge || (merge && dest[keys[i]] === undefined)) {
+            dest[keys[i]] = src[keys[i]];
+        }
+        i++;
+    }
+    return dest;
+}
+
+/**
+ * merge the values from src in the dest.
+ * means that properties that exist in dest will not be overwritten by src
+ * @param {Object} dest
+ * @param {Object} src
+ * @returns {Object} dest
+ */
+function merge(dest, src) {
+    return extend(dest, src, true);
+}
+
+/**
+ * simple class inheritance
+ * @param {Function} child
+ * @param {Function} base
+ * @param {Object} [properties]
+ */
+function inherit(child, base, properties) {
+    var baseP = base.prototype,
+        childP;
+
+    childP = child.prototype = Object.create(baseP);
+    childP.constructor = child;
+    childP._super = baseP;
+
+    if (properties) {
+        extend(childP, properties);
+    }
+}
+
+/**
+ * simple function bind
+ * @param {Function} fn
+ * @param {Object} context
+ * @returns {Function}
+ */
+function bindFn(fn, context) {
+    return function boundFn() {
+        return fn.apply(context, arguments);
+    };
+}
+
+/**
+ * let a boolean value also be a function that must return a boolean
+ * this first item in args will be used as the context
+ * @param {Boolean|Function} val
+ * @param {Array} [args]
+ * @returns {Boolean}
+ */
+function boolOrFn(val, args) {
+    if (typeof val == TYPE_FUNCTION) {
+        return val.apply(args ? args[0] || undefined : undefined, args);
+    }
+    return val;
+}
+
+/**
+ * use the val2 when val1 is undefined
+ * @param {*} val1
+ * @param {*} val2
+ * @returns {*}
+ */
+function ifUndefined(val1, val2) {
+    return (val1 === undefined) ? val2 : val1;
+}
+
+/**
+ * addEventListener with multiple events at once
+ * @param {EventTarget} target
+ * @param {String} types
+ * @param {Function} handler
+ */
+function addEventListeners(target, types, handler) {
+    each(splitStr(types), function(type) {
+        target.addEventListener(type, handler, false);
+    });
+}
+
+/**
+ * removeEventListener with multiple events at once
+ * @param {EventTarget} target
+ * @param {String} types
+ * @param {Function} handler
+ */
+function removeEventListeners(target, types, handler) {
+    each(splitStr(types), function(type) {
+        target.removeEventListener(type, handler, false);
+    });
+}
+
+/**
+ * find if a node is in the given parent
+ * @method hasParent
+ * @param {HTMLElement} node
+ * @param {HTMLElement} parent
+ * @return {Boolean} found
+ */
+function hasParent(node, parent) {
+    while (node) {
+        if (node == parent) {
+            return true;
+        }
+        node = node.parentNode;
+    }
+    return false;
+}
+
+/**
+ * small indexOf wrapper
+ * @param {String} str
+ * @param {String} find
+ * @returns {Boolean} found
+ */
+function inStr(str, find) {
+    return str.indexOf(find) > -1;
+}
+
+/**
+ * split string on whitespace
+ * @param {String} str
+ * @returns {Array} words
+ */
+function splitStr(str) {
+    return str.trim().split(/\s+/g);
+}
+
+/**
+ * find if a array contains the object using indexOf or a simple polyFill
+ * @param {Array} src
+ * @param {String} find
+ * @param {String} [findByKey]
+ * @return {Boolean|Number} false when not found, or the index
+ */
+function inArray(src, find, findByKey) {
+    if (src.indexOf && !findByKey) {
+        return src.indexOf(find);
+    } else {
+        var i = 0;
+        while (i < src.length) {
+            if ((findByKey && src[i][findByKey] == find) || (!findByKey && src[i] === find)) {
+                return i;
+            }
+            i++;
+        }
+        return -1;
+    }
+}
+
+/**
+ * convert array-like objects to real arrays
+ * @param {Object} obj
+ * @returns {Array}
+ */
+function toArray(obj) {
+    return Array.prototype.slice.call(obj, 0);
+}
+
+/**
+ * unique array with objects based on a key (like 'id') or just by the array's value
+ * @param {Array} src [{id:1},{id:2},{id:1}]
+ * @param {String} [key]
+ * @param {Boolean} [sort=False]
+ * @returns {Array} [{id:1},{id:2}]
+ */
+function uniqueArray(src, key, sort) {
+    var results = [];
+    var values = [];
+    var i = 0;
+
+    while (i < src.length) {
+        var val = key ? src[i][key] : src[i];
+        if (inArray(values, val) < 0) {
+            results.push(src[i]);
+        }
+        values[i] = val;
+        i++;
+    }
+
+    if (sort) {
+        if (!key) {
+            results = results.sort();
+        } else {
+            results = results.sort(function sortUniqueArray(a, b) {
+                return a[key] > b[key];
+            });
+        }
+    }
+
+    return results;
+}
+
+/**
+ * get the prefixed property
+ * @param {Object} obj
+ * @param {String} property
+ * @returns {String|Undefined} prefixed
+ */
+function prefixed(obj, property) {
+    var prefix, prop;
+    var camelProp = property[0].toUpperCase() + property.slice(1);
+
+    var i = 0;
+    while (i < VENDOR_PREFIXES.length) {
+        prefix = VENDOR_PREFIXES[i];
+        prop = (prefix) ? prefix + camelProp : property;
+
+        if (prop in obj) {
+            return prop;
+        }
+        i++;
+    }
+    return undefined;
+}
+
+/**
+ * get a unique id
+ * @returns {number} uniqueId
+ */
+var _uniqueId = 1;
+function uniqueId() {
+    return _uniqueId++;
+}
+
+/**
+ * get the window object of an element
+ * @param {HTMLElement} element
+ * @returns {DocumentView|Window}
+ */
+function getWindowForElement(element) {
+    var doc = element.ownerDocument;
+    return (doc.defaultView || doc.parentWindow);
+}
+
+var MOBILE_REGEX = /mobile|tablet|ip(ad|hone|od)|android/i;
+
+var SUPPORT_TOUCH = ('ontouchstart' in window);
+var SUPPORT_POINTER_EVENTS = prefixed(window, 'PointerEvent') !== undefined;
+var SUPPORT_ONLY_TOUCH = SUPPORT_TOUCH && MOBILE_REGEX.test(navigator.userAgent);
+
+var INPUT_TYPE_TOUCH = 'touch';
+var INPUT_TYPE_PEN = 'pen';
+var INPUT_TYPE_MOUSE = 'mouse';
+var INPUT_TYPE_KINECT = 'kinect';
+
+var COMPUTE_INTERVAL = 25;
+
+var INPUT_START = 1;
+var INPUT_MOVE = 2;
+var INPUT_END = 4;
+var INPUT_CANCEL = 8;
+
+var DIRECTION_NONE = 1;
+var DIRECTION_LEFT = 2;
+var DIRECTION_RIGHT = 4;
+var DIRECTION_UP = 8;
+var DIRECTION_DOWN = 16;
+
+var DIRECTION_HORIZONTAL = DIRECTION_LEFT | DIRECTION_RIGHT;
+var DIRECTION_VERTICAL = DIRECTION_UP | DIRECTION_DOWN;
+var DIRECTION_ALL = DIRECTION_HORIZONTAL | DIRECTION_VERTICAL;
+
+var PROPS_XY = ['x', 'y'];
+var PROPS_CLIENT_XY = ['clientX', 'clientY'];
+
+/**
+ * create new input type manager
+ * @param {Manager} manager
+ * @param {Function} callback
+ * @returns {Input}
+ * @constructor
+ */
+function Input(manager, callback) {
+    var self = this;
+    this.manager = manager;
+    this.callback = callback;
+    this.element = manager.element;
+    this.target = manager.options.inputTarget;
+
+    // smaller wrapper around the handler, for the scope and the enabled state of the manager,
+    // so when disabled the input events are completely bypassed.
+    this.domHandler = function(ev) {
+        if (boolOrFn(manager.options.enable, [manager])) {
+            self.handler(ev);
+        }
+    };
+
+    this.init();
+
+}
+
+Input.prototype = {
+    /**
+     * should handle the inputEvent data and trigger the callback
+     * @virtual
+     */
+    handler: function() { },
+
+    /**
+     * bind the events
+     */
+    init: function() {
+        this.evEl && addEventListeners(this.element, this.evEl, this.domHandler);
+        this.evTarget && addEventListeners(this.target, this.evTarget, this.domHandler);
+        this.evWin && addEventListeners(getWindowForElement(this.element), this.evWin, this.domHandler);
+    },
+
+    /**
+     * unbind the events
+     */
+    destroy: function() {
+        this.evEl && removeEventListeners(this.element, this.evEl, this.domHandler);
+        this.evTarget && removeEventListeners(this.target, this.evTarget, this.domHandler);
+        this.evWin && removeEventListeners(getWindowForElement(this.element), this.evWin, this.domHandler);
+    }
+};
+
+/**
+ * create new input type manager
+ * called by the Manager constructor
+ * @param {Hammer} manager
+ * @returns {Input}
+ */
+function createInputInstance(manager) {
+    var Type;
+    var inputClass = manager.options.inputClass;
+
+    if (inputClass) {
+        Type = inputClass;
+    } else if (SUPPORT_POINTER_EVENTS) {
+        Type = PointerEventInput;
+    } else if (SUPPORT_ONLY_TOUCH) {
+        Type = TouchInput;
+    } else if (!SUPPORT_TOUCH) {
+        Type = MouseInput;
+    } else {
+        Type = TouchMouseInput;
+    }
+    return new (Type)(manager, inputHandler);
+}
+
+/**
+ * handle input events
+ * @param {Manager} manager
+ * @param {String} eventType
+ * @param {Object} input
+ */
+function inputHandler(manager, eventType, input) {
+    var pointersLen = input.pointers.length;
+    var changedPointersLen = input.changedPointers.length;
+    var isFirst = (eventType & INPUT_START && (pointersLen - changedPointersLen === 0));
+    var isFinal = (eventType & (INPUT_END | INPUT_CANCEL) && (pointersLen - changedPointersLen === 0));
+
+    input.isFirst = !!isFirst;
+    input.isFinal = !!isFinal;
+
+    if (isFirst) {
+        manager.session = {};
+    }
+
+    // source event is the normalized value of the domEvents
+    // like 'touchstart, mouseup, pointerdown'
+    input.eventType = eventType;
+
+    // compute scale, rotation etc
+    computeInputData(manager, input);
+
+    // emit secret event
+    manager.emit('hammer.input', input);
+
+    manager.recognize(input);
+    manager.session.prevInput = input;
+}
+
+/**
+ * extend the data with some usable properties like scale, rotate, velocity etc
+ * @param {Object} manager
+ * @param {Object} input
+ */
+function computeInputData(manager, input) {
+    var session = manager.session;
+    var pointers = input.pointers;
+    var pointersLength = pointers.length;
+
+    // store the first input to calculate the distance and direction
+    if (!session.firstInput) {
+        session.firstInput = simpleCloneInputData(input);
+    }
+
+    // to compute scale and rotation we need to store the multiple touches
+    if (pointersLength > 1 && !session.firstMultiple) {
+        session.firstMultiple = simpleCloneInputData(input);
+    } else if (pointersLength === 1) {
+        session.firstMultiple = false;
+    }
+
+    var firstInput = session.firstInput;
+    var firstMultiple = session.firstMultiple;
+    var offsetCenter = firstMultiple ? firstMultiple.center : firstInput.center;
+
+    var center = input.center = getCenter(pointers);
+    input.timeStamp = now();
+    input.deltaTime = input.timeStamp - firstInput.timeStamp;
+
+    input.angle = getAngle(offsetCenter, center);
+    input.distance = getDistance(offsetCenter, center);
+
+    computeDeltaXY(session, input);
+    input.offsetDirection = getDirection(input.deltaX, input.deltaY);
+
+    input.scale = firstMultiple ? getScale(firstMultiple.pointers, pointers) : 1;
+    input.rotation = firstMultiple ? getRotation(firstMultiple.pointers, pointers) : 0;
+
+    computeIntervalInputData(session, input);
+
+    // find the correct target
+    var target = manager.element;
+    if (hasParent(input.srcEvent.target, target)) {
+        target = input.srcEvent.target;
+    }
+    input.target = target;
+}
+
+function computeDeltaXY(session, input) {
+    var center = input.center;
+    var offset = session.offsetDelta || {};
+    var prevDelta = session.prevDelta || {};
+    var prevInput = session.prevInput || {};
+
+    if (input.eventType === INPUT_START || prevInput.eventType === INPUT_END) {
+        prevDelta = session.prevDelta = {
+            x: prevInput.deltaX || 0,
+            y: prevInput.deltaY || 0
+        };
+
+        offset = session.offsetDelta = {
+            x: center.x,
+            y: center.y
+        };
+    }
+
+    input.deltaX = prevDelta.x + (center.x - offset.x);
+    input.deltaY = prevDelta.y + (center.y - offset.y);
+}
+
+/**
+ * velocity is calculated every x ms
+ * @param {Object} session
+ * @param {Object} input
+ */
+function computeIntervalInputData(session, input) {
+    var last = session.lastInterval || input,
+        deltaTime = input.timeStamp - last.timeStamp,
+        velocity, velocityX, velocityY, direction;
+
+    if (input.eventType != INPUT_CANCEL && (deltaTime > COMPUTE_INTERVAL || last.velocity === undefined)) {
+        var deltaX = last.deltaX - input.deltaX;
+        var deltaY = last.deltaY - input.deltaY;
+
+        var v = getVelocity(deltaTime, deltaX, deltaY);
+        velocityX = v.x;
+        velocityY = v.y;
+        velocity = (abs(v.x) > abs(v.y)) ? v.x : v.y;
+        direction = getDirection(deltaX, deltaY);
+
+        session.lastInterval = input;
+    } else {
+        // use latest velocity info if it doesn't overtake a minimum period
+        velocity = last.velocity;
+        velocityX = last.velocityX;
+        velocityY = last.velocityY;
+        direction = last.direction;
+    }
+
+    input.velocity = velocity;
+    input.velocityX = velocityX;
+    input.velocityY = velocityY;
+    input.direction = direction;
+}
+
+/**
+ * create a simple clone from the input used for storage of firstInput and firstMultiple
+ * @param {Object} input
+ * @returns {Object} clonedInputData
+ */
+function simpleCloneInputData(input) {
+    // make a simple copy of the pointers because we will get a reference if we don't
+    // we only need clientXY for the calculations
+    var pointers = [];
+    var i = 0;
+    while (i < input.pointers.length) {
+        pointers[i] = {
+            clientX: round(input.pointers[i].clientX),
+            clientY: round(input.pointers[i].clientY)
+        };
+        i++;
+    }
+
+    return {
+        timeStamp: now(),
+        pointers: pointers,
+        center: getCenter(pointers),
+        deltaX: input.deltaX,
+        deltaY: input.deltaY
+    };
+}
+
+/**
+ * get the center of all the pointers
+ * @param {Array} pointers
+ * @return {Object} center contains `x` and `y` properties
+ */
+function getCenter(pointers) {
+    var pointersLength = pointers.length;
+
+    // no need to loop when only one touch
+    if (pointersLength === 1) {
+        return {
+            x: round(pointers[0].clientX),
+            y: round(pointers[0].clientY)
+        };
+    }
+
+    var x = 0, y = 0, i = 0;
+    while (i < pointersLength) {
+        x += pointers[i].clientX;
+        y += pointers[i].clientY;
+        i++;
+    }
+
+    return {
+        x: round(x / pointersLength),
+        y: round(y / pointersLength)
+    };
+}
+
+/**
+ * calculate the velocity between two points. unit is in px per ms.
+ * @param {Number} deltaTime
+ * @param {Number} x
+ * @param {Number} y
+ * @return {Object} velocity `x` and `y`
+ */
+function getVelocity(deltaTime, x, y) {
+    return {
+        x: x / deltaTime || 0,
+        y: y / deltaTime || 0
+    };
+}
+
+/**
+ * get the direction between two points
+ * @param {Number} x
+ * @param {Number} y
+ * @return {Number} direction
+ */
+function getDirection(x, y) {
+    if (x === y) {
+        return DIRECTION_NONE;
+    }
+
+    if (abs(x) >= abs(y)) {
+        return x > 0 ? DIRECTION_LEFT : DIRECTION_RIGHT;
+    }
+    return y > 0 ? DIRECTION_UP : DIRECTION_DOWN;
+}
+
+/**
+ * calculate the absolute distance between two points
+ * @param {Object} p1 {x, y}
+ * @param {Object} p2 {x, y}
+ * @param {Array} [props] containing x and y keys
+ * @return {Number} distance
+ */
+function getDistance(p1, p2, props) {
+    if (!props) {
+        props = PROPS_XY;
+    }
+    var x = p2[props[0]] - p1[props[0]],
+        y = p2[props[1]] - p1[props[1]];
+
+    return Math.sqrt((x * x) + (y * y));
+}
+
+/**
+ * calculate the angle between two coordinates
+ * @param {Object} p1
+ * @param {Object} p2
+ * @param {Array} [props] containing x and y keys
+ * @return {Number} angle
+ */
+function getAngle(p1, p2, props) {
+    if (!props) {
+        props = PROPS_XY;
+    }
+    var x = p2[props[0]] - p1[props[0]],
+        y = p2[props[1]] - p1[props[1]];
+    return Math.atan2(y, x) * 180 / Math.PI;
+}
+
+/**
+ * calculate the rotation degrees between two pointersets
+ * @param {Array} start array of pointers
+ * @param {Array} end array of pointers
+ * @return {Number} rotation
+ */
+function getRotation(start, end) {
+    return getAngle(end[1], end[0], PROPS_CLIENT_XY) - getAngle(start[1], start[0], PROPS_CLIENT_XY);
+}
+
+/**
+ * calculate the scale factor between two pointersets
+ * no scale is 1, and goes down to 0 when pinched together, and bigger when pinched out
+ * @param {Array} start array of pointers
+ * @param {Array} end array of pointers
+ * @return {Number} scale
+ */
+function getScale(start, end) {
+    return getDistance(end[0], end[1], PROPS_CLIENT_XY) / getDistance(start[0], start[1], PROPS_CLIENT_XY);
+}
+
+var MOUSE_INPUT_MAP = {
+    mousedown: INPUT_START,
+    mousemove: INPUT_MOVE,
+    mouseup: INPUT_END
+};
+
+var MOUSE_ELEMENT_EVENTS = 'mousedown';
+var MOUSE_WINDOW_EVENTS = 'mousemove mouseup';
+
+/**
+ * Mouse events input
+ * @constructor
+ * @extends Input
+ */
+function MouseInput() {
+    this.evEl = MOUSE_ELEMENT_EVENTS;
+    this.evWin = MOUSE_WINDOW_EVENTS;
+
+    this.allow = true; // used by Input.TouchMouse to disable mouse events
+    this.pressed = false; // mousedown state
+
+    Input.apply(this, arguments);
+}
+
+inherit(MouseInput, Input, {
+    /**
+     * handle mouse events
+     * @param {Object} ev
+     */
+    handler: function MEhandler(ev) {
+        var eventType = MOUSE_INPUT_MAP[ev.type];
+
+        // on start we want to have the left mouse button down
+        if (eventType & INPUT_START && ev.button === 0) {
+            this.pressed = true;
+        }
+
+        if (eventType & INPUT_MOVE && ev.which !== 1) {
+            eventType = INPUT_END;
+        }
+
+        // mouse must be down, and mouse events are allowed (see the TouchMouse input)
+        if (!this.pressed || !this.allow) {
+            return;
+        }
+
+        if (eventType & INPUT_END) {
+            this.pressed = false;
+        }
+
+        this.callback(this.manager, eventType, {
+            pointers: [ev],
+            changedPointers: [ev],
+            pointerType: INPUT_TYPE_MOUSE,
+            srcEvent: ev
+        });
+    }
+});
+
+var POINTER_INPUT_MAP = {
+    pointerdown: INPUT_START,
+    pointermove: INPUT_MOVE,
+    pointerup: INPUT_END,
+    pointercancel: INPUT_CANCEL,
+    pointerout: INPUT_CANCEL
+};
+
+// in IE10 the pointer types is defined as an enum
+var IE10_POINTER_TYPE_ENUM = {
+    2: INPUT_TYPE_TOUCH,
+    3: INPUT_TYPE_PEN,
+    4: INPUT_TYPE_MOUSE,
+    5: INPUT_TYPE_KINECT // see https://twitter.com/jacobrossi/status/480596438489890816
+};
+
+var POINTER_ELEMENT_EVENTS = 'pointerdown';
+var POINTER_WINDOW_EVENTS = 'pointermove pointerup pointercancel';
+
+// IE10 has prefixed support, and case-sensitive
+if (window.MSPointerEvent) {
+    POINTER_ELEMENT_EVENTS = 'MSPointerDown';
+    POINTER_WINDOW_EVENTS = 'MSPointerMove MSPointerUp MSPointerCancel';
+}
+
+/**
+ * Pointer events input
+ * @constructor
+ * @extends Input
+ */
+function PointerEventInput() {
+    this.evEl = POINTER_ELEMENT_EVENTS;
+    this.evWin = POINTER_WINDOW_EVENTS;
+
+    Input.apply(this, arguments);
+
+    this.store = (this.manager.session.pointerEvents = []);
+}
+
+inherit(PointerEventInput, Input, {
+    /**
+     * handle mouse events
+     * @param {Object} ev
+     */
+    handler: function PEhandler(ev) {
+        var store = this.store;
+        var removePointer = false;
+
+        var eventTypeNormalized = ev.type.toLowerCase().replace('ms', '');
+        var eventType = POINTER_INPUT_MAP[eventTypeNormalized];
+        var pointerType = IE10_POINTER_TYPE_ENUM[ev.pointerType] || ev.pointerType;
+
+        var isTouch = (pointerType == INPUT_TYPE_TOUCH);
+
+        // get index of the event in the store
+        var storeIndex = inArray(store, ev.pointerId, 'pointerId');
+
+        // start and mouse must be down
+        if (eventType & INPUT_START && (ev.button === 0 || isTouch)) {
+            if (storeIndex < 0) {
+                store.push(ev);
+                storeIndex = store.length - 1;
+            }
+        } else if (eventType & (INPUT_END | INPUT_CANCEL)) {
+            removePointer = true;
+        }
+
+        // it not found, so the pointer hasn't been down (so it's probably a hover)
+        if (storeIndex < 0) {
+            return;
+        }
+
+        // update the event in the store
+        store[storeIndex] = ev;
+
+        this.callback(this.manager, eventType, {
+            pointers: store,
+            changedPointers: [ev],
+            pointerType: pointerType,
+            srcEvent: ev
+        });
+
+        if (removePointer) {
+            // remove from the store
+            store.splice(storeIndex, 1);
+        }
+    }
+});
+
+var SINGLE_TOUCH_INPUT_MAP = {
+    touchstart: INPUT_START,
+    touchmove: INPUT_MOVE,
+    touchend: INPUT_END,
+    touchcancel: INPUT_CANCEL
+};
+
+var SINGLE_TOUCH_TARGET_EVENTS = 'touchstart';
+var SINGLE_TOUCH_WINDOW_EVENTS = 'touchstart touchmove touchend touchcancel';
+
+/**
+ * Touch events input
+ * @constructor
+ * @extends Input
+ */
+function SingleTouchInput() {
+    this.evTarget = SINGLE_TOUCH_TARGET_EVENTS;
+    this.evWin = SINGLE_TOUCH_WINDOW_EVENTS;
+    this.started = false;
+
+    Input.apply(this, arguments);
+}
+
+inherit(SingleTouchInput, Input, {
+    handler: function TEhandler(ev) {
+        var type = SINGLE_TOUCH_INPUT_MAP[ev.type];
+
+        // should we handle the touch events?
+        if (type === INPUT_START) {
+            this.started = true;
+        }
+
+        if (!this.started) {
+            return;
+        }
+
+        var touches = normalizeSingleTouches.call(this, ev, type);
+
+        // when done, reset the started state
+        if (type & (INPUT_END | INPUT_CANCEL) && touches[0].length - touches[1].length === 0) {
+            this.started = false;
+        }
+
+        this.callback(this.manager, type, {
+            pointers: touches[0],
+            changedPointers: touches[1],
+            pointerType: INPUT_TYPE_TOUCH,
+            srcEvent: ev
+        });
+    }
+});
+
+/**
+ * @this {TouchInput}
+ * @param {Object} ev
+ * @param {Number} type flag
+ * @returns {undefined|Array} [all, changed]
+ */
+function normalizeSingleTouches(ev, type) {
+    var all = toArray(ev.touches);
+    var changed = toArray(ev.changedTouches);
+
+    if (type & (INPUT_END | INPUT_CANCEL)) {
+        all = uniqueArray(all.concat(changed), 'identifier', true);
+    }
+
+    return [all, changed];
+}
+
+var TOUCH_INPUT_MAP = {
+    touchstart: INPUT_START,
+    touchmove: INPUT_MOVE,
+    touchend: INPUT_END,
+    touchcancel: INPUT_CANCEL
+};
+
+var TOUCH_TARGET_EVENTS = 'touchstart touchmove touchend touchcancel';
+
+/**
+ * Multi-user touch events input
+ * @constructor
+ * @extends Input
+ */
+function TouchInput() {
+    this.evTarget = TOUCH_TARGET_EVENTS;
+    this.targetIds = {};
+
+    Input.apply(this, arguments);
+}
+
+inherit(TouchInput, Input, {
+    handler: function MTEhandler(ev) {
+        var type = TOUCH_INPUT_MAP[ev.type];
+        var touches = getTouches.call(this, ev, type);
+        if (!touches) {
+            return;
+        }
+
+        this.callback(this.manager, type, {
+            pointers: touches[0],
+            changedPointers: touches[1],
+            pointerType: INPUT_TYPE_TOUCH,
+            srcEvent: ev
+        });
+    }
+});
+
+/**
+ * @this {TouchInput}
+ * @param {Object} ev
+ * @param {Number} type flag
+ * @returns {undefined|Array} [all, changed]
+ */
+function getTouches(ev, type) {
+    var allTouches = toArray(ev.touches);
+    var targetIds = this.targetIds;
+
+    // when there is only one touch, the process can be simplified
+    if (type & (INPUT_START | INPUT_MOVE) && allTouches.length === 1) {
+        targetIds[allTouches[0].identifier] = true;
+        return [allTouches, allTouches];
+    }
+
+    var i,
+        targetTouches,
+        changedTouches = toArray(ev.changedTouches),
+        changedTargetTouches = [],
+        target = this.target;
+
+    // get target touches from touches
+    targetTouches = allTouches.filter(function(touch) {
+        return hasParent(touch.target, target);
+    });
+
+    // collect touches
+    if (type === INPUT_START) {
+        i = 0;
+        while (i < targetTouches.length) {
+            targetIds[targetTouches[i].identifier] = true;
+            i++;
+        }
+    }
+
+    // filter changed touches to only contain touches that exist in the collected target ids
+    i = 0;
+    while (i < changedTouches.length) {
+        if (targetIds[changedTouches[i].identifier]) {
+            changedTargetTouches.push(changedTouches[i]);
+        }
+
+        // cleanup removed touches
+        if (type & (INPUT_END | INPUT_CANCEL)) {
+            delete targetIds[changedTouches[i].identifier];
+        }
+        i++;
+    }
+
+    if (!changedTargetTouches.length) {
+        return;
+    }
+
+    return [
+        // merge targetTouches with changedTargetTouches so it contains ALL touches, including 'end' and 'cancel'
+        uniqueArray(targetTouches.concat(changedTargetTouches), 'identifier', true),
+        changedTargetTouches
+    ];
+}
+
+/**
+ * Combined touch and mouse input
+ *
+ * Touch has a higher priority then mouse, and while touching no mouse events are allowed.
+ * This because touch devices also emit mouse events while doing a touch.
+ *
+ * @constructor
+ * @extends Input
+ */
+function TouchMouseInput() {
+    Input.apply(this, arguments);
+
+    var handler = bindFn(this.handler, this);
+    this.touch = new TouchInput(this.manager, handler);
+    this.mouse = new MouseInput(this.manager, handler);
+}
+
+inherit(TouchMouseInput, Input, {
+    /**
+     * handle mouse and touch events
+     * @param {Hammer} manager
+     * @param {String} inputEvent
+     * @param {Object} inputData
+     */
+    handler: function TMEhandler(manager, inputEvent, inputData) {
+        var isTouch = (inputData.pointerType == INPUT_TYPE_TOUCH),
+            isMouse = (inputData.pointerType == INPUT_TYPE_MOUSE);
+
+        // when we're in a touch event, so  block all upcoming mouse events
+        // most mobile browser also emit mouseevents, right after touchstart
+        if (isTouch) {
+            this.mouse.allow = false;
+        } else if (isMouse && !this.mouse.allow) {
+            return;
+        }
+
+        // reset the allowMouse when we're done
+        if (inputEvent & (INPUT_END | INPUT_CANCEL)) {
+            this.mouse.allow = true;
+        }
+
+        this.callback(manager, inputEvent, inputData);
+    },
+
+    /**
+     * remove the event listeners
+     */
+    destroy: function destroy() {
+        this.touch.destroy();
+        this.mouse.destroy();
+    }
+});
+
+var PREFIXED_TOUCH_ACTION = prefixed(TEST_ELEMENT.style, 'touchAction');
+var NATIVE_TOUCH_ACTION = PREFIXED_TOUCH_ACTION !== undefined;
+
+// magical touchAction value
+var TOUCH_ACTION_COMPUTE = 'compute';
+var TOUCH_ACTION_AUTO = 'auto';
+var TOUCH_ACTION_MANIPULATION = 'manipulation'; // not implemented
+var TOUCH_ACTION_NONE = 'none';
+var TOUCH_ACTION_PAN_X = 'pan-x';
+var TOUCH_ACTION_PAN_Y = 'pan-y';
+
+/**
+ * Touch Action
+ * sets the touchAction property or uses the js alternative
+ * @param {Manager} manager
+ * @param {String} value
+ * @constructor
+ */
+function TouchAction(manager, value) {
+    this.manager = manager;
+    this.set(value);
+}
+
+TouchAction.prototype = {
+    /**
+     * set the touchAction value on the element or enable the polyfill
+     * @param {String} value
+     */
+    set: function(value) {
+        // find out the touch-action by the event handlers
+        if (value == TOUCH_ACTION_COMPUTE) {
+            value = this.compute();
+        }
+
+        if (NATIVE_TOUCH_ACTION) {
+            this.manager.element.style[PREFIXED_TOUCH_ACTION] = value;
+        }
+        this.actions = value.toLowerCase().trim();
+    },
+
+    /**
+     * just re-set the touchAction value
+     */
+    update: function() {
+        this.set(this.manager.options.touchAction);
+    },
+
+    /**
+     * compute the value for the touchAction property based on the recognizer's settings
+     * @returns {String} value
+     */
+    compute: function() {
+        var actions = [];
+        each(this.manager.recognizers, function(recognizer) {
+            if (boolOrFn(recognizer.options.enable, [recognizer])) {
+                actions = actions.concat(recognizer.getTouchAction());
+            }
+        });
+        return cleanTouchActions(actions.join(' '));
+    },
+
+    /**
+     * this method is called on each input cycle and provides the preventing of the browser behavior
+     * @param {Object} input
+     */
+    preventDefaults: function(input) {
+        // not needed with native support for the touchAction property
+        if (NATIVE_TOUCH_ACTION) {
+            return;
+        }
+
+        var srcEvent = input.srcEvent;
+        var direction = input.offsetDirection;
+
+        // if the touch action did prevented once this session
+        if (this.manager.session.prevented) {
+            srcEvent.preventDefault();
+            return;
+        }
+
+        var actions = this.actions;
+        var hasNone = inStr(actions, TOUCH_ACTION_NONE);
+        var hasPanY = inStr(actions, TOUCH_ACTION_PAN_Y);
+        var hasPanX = inStr(actions, TOUCH_ACTION_PAN_X);
+
+        if (hasNone ||
+            (hasPanY && direction & DIRECTION_HORIZONTAL) ||
+            (hasPanX && direction & DIRECTION_VERTICAL)) {
+            return this.preventSrc(srcEvent);
+        }
+    },
+
+    /**
+     * call preventDefault to prevent the browser's default behavior (scrolling in most cases)
+     * @param {Object} srcEvent
+     */
+    preventSrc: function(srcEvent) {
+        this.manager.session.prevented = true;
+        srcEvent.preventDefault();
+    }
+};
+
+/**
+ * when the touchActions are collected they are not a valid value, so we need to clean things up. *
+ * @param {String} actions
+ * @returns {*}
+ */
+function cleanTouchActions(actions) {
+    // none
+    if (inStr(actions, TOUCH_ACTION_NONE)) {
+        return TOUCH_ACTION_NONE;
+    }
+
+    var hasPanX = inStr(actions, TOUCH_ACTION_PAN_X);
+    var hasPanY = inStr(actions, TOUCH_ACTION_PAN_Y);
+
+    // pan-x and pan-y can be combined
+    if (hasPanX && hasPanY) {
+        return TOUCH_ACTION_PAN_X + ' ' + TOUCH_ACTION_PAN_Y;
+    }
+
+    // pan-x OR pan-y
+    if (hasPanX || hasPanY) {
+        return hasPanX ? TOUCH_ACTION_PAN_X : TOUCH_ACTION_PAN_Y;
+    }
+
+    // manipulation
+    if (inStr(actions, TOUCH_ACTION_MANIPULATION)) {
+        return TOUCH_ACTION_MANIPULATION;
+    }
+
+    return TOUCH_ACTION_AUTO;
+}
+
+/**
+ * Recognizer flow explained; *
+ * All recognizers have the initial state of POSSIBLE when a input session starts.
+ * The definition of a input session is from the first input until the last input, with all it's movement in it. *
+ * Example session for mouse-input: mousedown -> mousemove -> mouseup
+ *
+ * On each recognizing cycle (see Manager.recognize) the .recognize() method is executed
+ * which determines with state it should be.
+ *
+ * If the recognizer has the state FAILED, CANCELLED or RECOGNIZED (equals ENDED), it is reset to
+ * POSSIBLE to give it another change on the next cycle.
+ *
+ *               Possible
+ *                  |
+ *            +-----+---------------+
+ *            |                     |
+ *      +-----+-----+               |
+ *      |           |               |
+ *   Failed      Cancelled          |
+ *                          +-------+------+
+ *                          |              |
+ *                      Recognized       Began
+ *                                         |
+ *                                      Changed
+ *                                         |
+ *                                  Ended/Recognized
+ */
+var STATE_POSSIBLE = 1;
+var STATE_BEGAN = 2;
+var STATE_CHANGED = 4;
+var STATE_ENDED = 8;
+var STATE_RECOGNIZED = STATE_ENDED;
+var STATE_CANCELLED = 16;
+var STATE_FAILED = 32;
+
+/**
+ * Recognizer
+ * Every recognizer needs to extend from this class.
+ * @constructor
+ * @param {Object} options
+ */
+function Recognizer(options) {
+    this.id = uniqueId();
+
+    this.manager = null;
+    this.options = merge(options || {}, this.defaults);
+
+    // default is enable true
+    this.options.enable = ifUndefined(this.options.enable, true);
+
+    this.state = STATE_POSSIBLE;
+
+    this.simultaneous = {};
+    this.requireFail = [];
+}
+
+Recognizer.prototype = {
+    /**
+     * @virtual
+     * @type {Object}
+     */
+    defaults: {},
+
+    /**
+     * set options
+     * @param {Object} options
+     * @return {Recognizer}
+     */
+    set: function(options) {
+        extend(this.options, options);
+
+        // also update the touchAction, in case something changed about the directions/enabled state
+        this.manager && this.manager.touchAction.update();
+        return this;
+    },
+
+    /**
+     * recognize simultaneous with an other recognizer.
+     * @param {Recognizer} otherRecognizer
+     * @returns {Recognizer} this
+     */
+    recognizeWith: function(otherRecognizer) {
+        if (invokeArrayArg(otherRecognizer, 'recognizeWith', this)) {
+            return this;
+        }
+
+        var simultaneous = this.simultaneous;
+        otherRecognizer = getRecognizerByNameIfManager(otherRecognizer, this);
+        if (!simultaneous[otherRecognizer.id]) {
+            simultaneous[otherRecognizer.id] = otherRecognizer;
+            otherRecognizer.recognizeWith(this);
+        }
+        return this;
+    },
+
+    /**
+     * drop the simultaneous link. it doesnt remove the link on the other recognizer.
+     * @param {Recognizer} otherRecognizer
+     * @returns {Recognizer} this
+     */
+    dropRecognizeWith: function(otherRecognizer) {
+        if (invokeArrayArg(otherRecognizer, 'dropRecognizeWith', this)) {
+            return this;
+        }
+
+        otherRecognizer = getRecognizerByNameIfManager(otherRecognizer, this);
+        delete this.simultaneous[otherRecognizer.id];
+        return this;
+    },
+
+    /**
+     * recognizer can only run when an other is failing
+     * @param {Recognizer} otherRecognizer
+     * @returns {Recognizer} this
+     */
+    requireFailure: function(otherRecognizer) {
+        if (invokeArrayArg(otherRecognizer, 'requireFailure', this)) {
+            return this;
+        }
+
+        var requireFail = this.requireFail;
+        otherRecognizer = getRecognizerByNameIfManager(otherRecognizer, this);
+        if (inArray(requireFail, otherRecognizer) === -1) {
+            requireFail.push(otherRecognizer);
+            otherRecognizer.requireFailure(this);
+        }
+        return this;
+    },
+
+    /**
+     * drop the requireFailure link. it does not remove the link on the other recognizer.
+     * @param {Recognizer} otherRecognizer
+     * @returns {Recognizer} this
+     */
+    dropRequireFailure: function(otherRecognizer) {
+        if (invokeArrayArg(otherRecognizer, 'dropRequireFailure', this)) {
+            return this;
+        }
+
+        otherRecognizer = getRecognizerByNameIfManager(otherRecognizer, this);
+        var index = inArray(this.requireFail, otherRecognizer);
+        if (index > -1) {
+            this.requireFail.splice(index, 1);
+        }
+        return this;
+    },
+
+    /**
+     * has require failures boolean
+     * @returns {boolean}
+     */
+    hasRequireFailures: function() {
+        return this.requireFail.length > 0;
+    },
+
+    /**
+     * if the recognizer can recognize simultaneous with an other recognizer
+     * @param {Recognizer} otherRecognizer
+     * @returns {Boolean}
+     */
+    canRecognizeWith: function(otherRecognizer) {
+        return !!this.simultaneous[otherRecognizer.id];
+    },
+
+    /**
+     * You should use `tryEmit` instead of `emit` directly to check
+     * that all the needed recognizers has failed before emitting.
+     * @param {Object} input
+     */
+    emit: function(input) {
+        var self = this;
+        var state = this.state;
+
+        function emit(withState) {
+            self.manager.emit(self.options.event + (withState ? stateStr(state) : ''), input);
+        }
+
+        // 'panstart' and 'panmove'
+        if (state < STATE_ENDED) {
+            emit(true);
+        }
+
+        emit(); // simple 'eventName' events
+
+        // panend and pancancel
+        if (state >= STATE_ENDED) {
+            emit(true);
+        }
+    },
+
+    /**
+     * Check that all the require failure recognizers has failed,
+     * if true, it emits a gesture event,
+     * otherwise, setup the state to FAILED.
+     * @param {Object} input
+     */
+    tryEmit: function(input) {
+        if (this.canEmit()) {
+            return this.emit(input);
+        }
+        // it's failing anyway
+        this.state = STATE_FAILED;
+    },
+
+    /**
+     * can we emit?
+     * @returns {boolean}
+     */
+    canEmit: function() {
+        var i = 0;
+        while (i < this.requireFail.length) {
+            if (!(this.requireFail[i].state & (STATE_FAILED | STATE_POSSIBLE))) {
+                return false;
+            }
+            i++;
+        }
+        return true;
+    },
+
+    /**
+     * update the recognizer
+     * @param {Object} inputData
+     */
+    recognize: function(inputData) {
+        // make a new copy of the inputData
+        // so we can change the inputData without messing up the other recognizers
+        var inputDataClone = extend({}, inputData);
+
+        // is is enabled and allow recognizing?
+        if (!boolOrFn(this.options.enable, [this, inputDataClone])) {
+            this.reset();
+            this.state = STATE_FAILED;
+            return;
+        }
+
+        // reset when we've reached the end
+        if (this.state & (STATE_RECOGNIZED | STATE_CANCELLED | STATE_FAILED)) {
+            this.state = STATE_POSSIBLE;
+        }
+
+        this.state = this.process(inputDataClone);
+
+        // the recognizer has recognized a gesture
+        // so trigger an event
+        if (this.state & (STATE_BEGAN | STATE_CHANGED | STATE_ENDED | STATE_CANCELLED)) {
+            this.tryEmit(inputDataClone);
+        }
+    },
+
+    /**
+     * return the state of the recognizer
+     * the actual recognizing happens in this method
+     * @virtual
+     * @param {Object} inputData
+     * @returns {Const} STATE
+     */
+    process: function(inputData) { }, // jshint ignore:line
+
+    /**
+     * return the preferred touch-action
+     * @virtual
+     * @returns {Array}
+     */
+    getTouchAction: function() { },
+
+    /**
+     * called when the gesture isn't allowed to recognize
+     * like when another is being recognized or it is disabled
+     * @virtual
+     */
+    reset: function() { }
+};
+
+/**
+ * get a usable string, used as event postfix
+ * @param {Const} state
+ * @returns {String} state
+ */
+function stateStr(state) {
+    if (state & STATE_CANCELLED) {
+        return 'cancel';
+    } else if (state & STATE_ENDED) {
+        return 'end';
+    } else if (state & STATE_CHANGED) {
+        return 'move';
+    } else if (state & STATE_BEGAN) {
+        return 'start';
+    }
+    return '';
+}
+
+/**
+ * direction cons to string
+ * @param {Const} direction
+ * @returns {String}
+ */
+function directionStr(direction) {
+    if (direction == DIRECTION_DOWN) {
+        return 'down';
+    } else if (direction == DIRECTION_UP) {
+        return 'up';
+    } else if (direction == DIRECTION_LEFT) {
+        return 'left';
+    } else if (direction == DIRECTION_RIGHT) {
+        return 'right';
+    }
+    return '';
+}
+
+/**
+ * get a recognizer by name if it is bound to a manager
+ * @param {Recognizer|String} otherRecognizer
+ * @param {Recognizer} recognizer
+ * @returns {Recognizer}
+ */
+function getRecognizerByNameIfManager(otherRecognizer, recognizer) {
+    var manager = recognizer.manager;
+    if (manager) {
+        return manager.get(otherRecognizer);
+    }
+    return otherRecognizer;
+}
+
+/**
+ * This recognizer is just used as a base for the simple attribute recognizers.
+ * @constructor
+ * @extends Recognizer
+ */
+function AttrRecognizer() {
+    Recognizer.apply(this, arguments);
+}
+
+inherit(AttrRecognizer, Recognizer, {
+    /**
+     * @namespace
+     * @memberof AttrRecognizer
+     */
+    defaults: {
+        /**
+         * @type {Number}
+         * @default 1
+         */
+        pointers: 1
+    },
+
+    /**
+     * Used to check if it the recognizer receives valid input, like input.distance > 10.
+     * @memberof AttrRecognizer
+     * @param {Object} input
+     * @returns {Boolean} recognized
+     */
+    attrTest: function(input) {
+        var optionPointers = this.options.pointers;
+        return optionPointers === 0 || input.pointers.length === optionPointers;
+    },
+
+    /**
+     * Process the input and return the state for the recognizer
+     * @memberof AttrRecognizer
+     * @param {Object} input
+     * @returns {*} State
+     */
+    process: function(input) {
+        var state = this.state;
+        var eventType = input.eventType;
+
+        var isRecognized = state & (STATE_BEGAN | STATE_CHANGED);
+        var isValid = this.attrTest(input);
+
+        // on cancel input and we've recognized before, return STATE_CANCELLED
+        if (isRecognized && (eventType & INPUT_CANCEL || !isValid)) {
+            return state | STATE_CANCELLED;
+        } else if (isRecognized || isValid) {
+            if (eventType & INPUT_END) {
+                return state | STATE_ENDED;
+            } else if (!(state & STATE_BEGAN)) {
+                return STATE_BEGAN;
+            }
+            return state | STATE_CHANGED;
+        }
+        return STATE_FAILED;
+    }
+});
+
+/**
+ * Pan
+ * Recognized when the pointer is down and moved in the allowed direction.
+ * @constructor
+ * @extends AttrRecognizer
+ */
+function PanRecognizer() {
+    AttrRecognizer.apply(this, arguments);
+
+    this.pX = null;
+    this.pY = null;
+}
+
+inherit(PanRecognizer, AttrRecognizer, {
+    /**
+     * @namespace
+     * @memberof PanRecognizer
+     */
+    defaults: {
+        event: 'pan',
+        threshold: 10,
+        pointers: 1,
+        direction: DIRECTION_ALL
+    },
+
+    getTouchAction: function() {
+        var direction = this.options.direction;
+        var actions = [];
+        if (direction & DIRECTION_HORIZONTAL) {
+            actions.push(TOUCH_ACTION_PAN_Y);
+        }
+        if (direction & DIRECTION_VERTICAL) {
+            actions.push(TOUCH_ACTION_PAN_X);
+        }
+        return actions;
+    },
+
+    directionTest: function(input) {
+        var options = this.options;
+        var hasMoved = true;
+        var distance = input.distance;
+        var direction = input.direction;
+        var x = input.deltaX;
+        var y = input.deltaY;
+
+        // lock to axis?
+        if (!(direction & options.direction)) {
+            if (options.direction & DIRECTION_HORIZONTAL) {
+                direction = (x === 0) ? DIRECTION_NONE : (x < 0) ? DIRECTION_LEFT : DIRECTION_RIGHT;
+                hasMoved = x != this.pX;
+                distance = Math.abs(input.deltaX);
+            } else {
+                direction = (y === 0) ? DIRECTION_NONE : (y < 0) ? DIRECTION_UP : DIRECTION_DOWN;
+                hasMoved = y != this.pY;
+                distance = Math.abs(input.deltaY);
+            }
+        }
+        input.direction = direction;
+        return hasMoved && distance > options.threshold && direction & options.direction;
+    },
+
+    attrTest: function(input) {
+        return AttrRecognizer.prototype.attrTest.call(this, input) &&
+            (this.state & STATE_BEGAN || (!(this.state & STATE_BEGAN) && this.directionTest(input)));
+    },
+
+    emit: function(input) {
+        this.pX = input.deltaX;
+        this.pY = input.deltaY;
+
+        var direction = directionStr(input.direction);
+        if (direction) {
+            this.manager.emit(this.options.event + direction, input);
+        }
+
+        this._super.emit.call(this, input);
+    }
+});
+
+/**
+ * Pinch
+ * Recognized when two or more pointers are moving toward (zoom-in) or away from each other (zoom-out).
+ * @constructor
+ * @extends AttrRecognizer
+ */
+function PinchRecognizer() {
+    AttrRecognizer.apply(this, arguments);
+}
+
+inherit(PinchRecognizer, AttrRecognizer, {
+    /**
+     * @namespace
+     * @memberof PinchRecognizer
+     */
+    defaults: {
+        event: 'pinch',
+        threshold: 0,
+        pointers: 2
+    },
+
+    getTouchAction: function() {
+        return [TOUCH_ACTION_NONE];
+    },
+
+    attrTest: function(input) {
+        return this._super.attrTest.call(this, input) &&
+            (Math.abs(input.scale - 1) > this.options.threshold || this.state & STATE_BEGAN);
+    },
+
+    emit: function(input) {
+        this._super.emit.call(this, input);
+        if (input.scale !== 1) {
+            var inOut = input.scale < 1 ? 'in' : 'out';
+            this.manager.emit(this.options.event + inOut, input);
+        }
+    }
+});
+
+/**
+ * Press
+ * Recognized when the pointer is down for x ms without any movement.
+ * @constructor
+ * @extends Recognizer
+ */
+function PressRecognizer() {
+    Recognizer.apply(this, arguments);
+
+    this._timer = null;
+    this._input = null;
+}
+
+inherit(PressRecognizer, Recognizer, {
+    /**
+     * @namespace
+     * @memberof PressRecognizer
+     */
+    defaults: {
+        event: 'press',
+        pointers: 1,
+        time: 500, // minimal time of the pointer to be pressed
+        threshold: 5 // a minimal movement is ok, but keep it low
+    },
+
+    getTouchAction: function() {
+        return [TOUCH_ACTION_AUTO];
+    },
+
+    process: function(input) {
+        var options = this.options;
+        var validPointers = input.pointers.length === options.pointers;
+        var validMovement = input.distance < options.threshold;
+        var validTime = input.deltaTime > options.time;
+
+        this._input = input;
+
+        // we only allow little movement
+        // and we've reached an end event, so a tap is possible
+        if (!validMovement || !validPointers || (input.eventType & (INPUT_END | INPUT_CANCEL) && !validTime)) {
+            this.reset();
+        } else if (input.eventType & INPUT_START) {
+            this.reset();
+            this._timer = setTimeoutContext(function() {
+                this.state = STATE_RECOGNIZED;
+                this.tryEmit();
+            }, options.time, this);
+        } else if (input.eventType & INPUT_END) {
+            return STATE_RECOGNIZED;
+        }
+        return STATE_FAILED;
+    },
+
+    reset: function() {
+        clearTimeout(this._timer);
+    },
+
+    emit: function(input) {
+        if (this.state !== STATE_RECOGNIZED) {
+            return;
+        }
+
+        if (input && (input.eventType & INPUT_END)) {
+            this.manager.emit(this.options.event + 'up', input);
+        } else {
+            this._input.timeStamp = now();
+            this.manager.emit(this.options.event, this._input);
+        }
+    }
+});
+
+/**
+ * Rotate
+ * Recognized when two or more pointer are moving in a circular motion.
+ * @constructor
+ * @extends AttrRecognizer
+ */
+function RotateRecognizer() {
+    AttrRecognizer.apply(this, arguments);
+}
+
+inherit(RotateRecognizer, AttrRecognizer, {
+    /**
+     * @namespace
+     * @memberof RotateRecognizer
+     */
+    defaults: {
+        event: 'rotate',
+        threshold: 0,
+        pointers: 2
+    },
+
+    getTouchAction: function() {
+        return [TOUCH_ACTION_NONE];
+    },
+
+    attrTest: function(input) {
+        return this._super.attrTest.call(this, input) &&
+            (Math.abs(input.rotation) > this.options.threshold || this.state & STATE_BEGAN);
+    }
+});
+
+/**
+ * Swipe
+ * Recognized when the pointer is moving fast (velocity), with enough distance in the allowed direction.
+ * @constructor
+ * @extends AttrRecognizer
+ */
+function SwipeRecognizer() {
+    AttrRecognizer.apply(this, arguments);
+}
+
+inherit(SwipeRecognizer, AttrRecognizer, {
+    /**
+     * @namespace
+     * @memberof SwipeRecognizer
+     */
+    defaults: {
+        event: 'swipe',
+        threshold: 10,
+        velocity: 0.65,
+        direction: DIRECTION_HORIZONTAL | DIRECTION_VERTICAL,
+        pointers: 1
+    },
+
+    getTouchAction: function() {
+        return PanRecognizer.prototype.getTouchAction.call(this);
+    },
+
+    attrTest: function(input) {
+        var direction = this.options.direction;
+        var velocity;
+
+        if (direction & (DIRECTION_HORIZONTAL | DIRECTION_VERTICAL)) {
+            velocity = input.velocity;
+        } else if (direction & DIRECTION_HORIZONTAL) {
+            velocity = input.velocityX;
+        } else if (direction & DIRECTION_VERTICAL) {
+            velocity = input.velocityY;
+        }
+
+        return this._super.attrTest.call(this, input) &&
+            direction & input.direction &&
+            input.distance > this.options.threshold &&
+            abs(velocity) > this.options.velocity && input.eventType & INPUT_END;
+    },
+
+    emit: function(input) {
+        var direction = directionStr(input.direction);
+        if (direction) {
+            this.manager.emit(this.options.event + direction, input);
+        }
+
+        this.manager.emit(this.options.event, input);
+    }
+});
+
+/**
+ * A tap is ecognized when the pointer is doing a small tap/click. Multiple taps are recognized if they occur
+ * between the given interval and position. The delay option can be used to recognize multi-taps without firing
+ * a single tap.
+ *
+ * The eventData from the emitted event contains the property `tapCount`, which contains the amount of
+ * multi-taps being recognized.
+ * @constructor
+ * @extends Recognizer
+ */
+function TapRecognizer() {
+    Recognizer.apply(this, arguments);
+
+    // previous time and center,
+    // used for tap counting
+    this.pTime = false;
+    this.pCenter = false;
+
+    this._timer = null;
+    this._input = null;
+    this.count = 0;
+}
+
+inherit(TapRecognizer, Recognizer, {
+    /**
+     * @namespace
+     * @memberof PinchRecognizer
+     */
+    defaults: {
+        event: 'tap',
+        pointers: 1,
+        taps: 1,
+        interval: 300, // max time between the multi-tap taps
+        time: 250, // max time of the pointer to be down (like finger on the screen)
+        threshold: 2, // a minimal movement is ok, but keep it low
+        posThreshold: 10 // a multi-tap can be a bit off the initial position
+    },
+
+    getTouchAction: function() {
+        return [TOUCH_ACTION_MANIPULATION];
+    },
+
+    process: function(input) {
+        var options = this.options;
+
+        var validPointers = input.pointers.length === options.pointers;
+        var validMovement = input.distance < options.threshold;
+        var validTouchTime = input.deltaTime < options.time;
+
+        this.reset();
+
+        if ((input.eventType & INPUT_START) && (this.count === 0)) {
+            return this.failTimeout();
+        }
+
+        // we only allow little movement
+        // and we've reached an end event, so a tap is possible
+        if (validMovement && validTouchTime && validPointers) {
+            if (input.eventType != INPUT_END) {
+                return this.failTimeout();
+            }
+
+            var validInterval = this.pTime ? (input.timeStamp - this.pTime < options.interval) : true;
+            var validMultiTap = !this.pCenter || getDistance(this.pCenter, input.center) < options.posThreshold;
+
+            this.pTime = input.timeStamp;
+            this.pCenter = input.center;
+
+            if (!validMultiTap || !validInterval) {
+                this.count = 1;
+            } else {
+                this.count += 1;
+            }
+
+            this._input = input;
+
+            // if tap count matches we have recognized it,
+            // else it has began recognizing...
+            var tapCount = this.count % options.taps;
+            if (tapCount === 0) {
+                // no failing requirements, immediately trigger the tap event
+                // or wait as long as the multitap interval to trigger
+                if (!this.hasRequireFailures()) {
+                    return STATE_RECOGNIZED;
+                } else {
+                    this._timer = setTimeoutContext(function() {
+                        this.state = STATE_RECOGNIZED;
+                        this.tryEmit();
+                    }, options.interval, this);
+                    return STATE_BEGAN;
+                }
+            }
+        }
+        return STATE_FAILED;
+    },
+
+    failTimeout: function() {
+        this._timer = setTimeoutContext(function() {
+            this.state = STATE_FAILED;
+        }, this.options.interval, this);
+        return STATE_FAILED;
+    },
+
+    reset: function() {
+        clearTimeout(this._timer);
+    },
+
+    emit: function() {
+        if (this.state == STATE_RECOGNIZED ) {
+            this._input.tapCount = this.count;
+            this.manager.emit(this.options.event, this._input);
+        }
+    }
+});
+
+/**
+ * Simple way to create an manager with a default set of recognizers.
+ * @param {HTMLElement} element
+ * @param {Object} [options]
+ * @constructor
+ */
+function Hammer(element, options) {
+    options = options || {};
+    options.recognizers = ifUndefined(options.recognizers, Hammer.defaults.preset);
+    return new Manager(element, options);
+}
+
+/**
+ * @const {string}
+ */
+Hammer.VERSION = '2.0.4';
+
+/**
+ * default settings
+ * @namespace
+ */
+Hammer.defaults = {
+    /**
+     * set if DOM events are being triggered.
+     * But this is slower and unused by simple implementations, so disabled by default.
+     * @type {Boolean}
+     * @default false
+     */
+    domEvents: false,
+
+    /**
+     * The value for the touchAction property/fallback.
+     * When set to `compute` it will magically set the correct value based on the added recognizers.
+     * @type {String}
+     * @default compute
+     */
+    touchAction: TOUCH_ACTION_COMPUTE,
+
+    /**
+     * @type {Boolean}
+     * @default true
+     */
+    enable: true,
+
+    /**
+     * EXPERIMENTAL FEATURE -- can be removed/changed
+     * Change the parent input target element.
+     * If Null, then it is being set the to main element.
+     * @type {Null|EventTarget}
+     * @default null
+     */
+    inputTarget: null,
+
+    /**
+     * force an input class
+     * @type {Null|Function}
+     * @default null
+     */
+    inputClass: null,
+
+    /**
+     * Default recognizer setup when calling `Hammer()`
+     * When creating a new Manager these will be skipped.
+     * @type {Array}
+     */
+    preset: [
+        // RecognizerClass, options, [recognizeWith, ...], [requireFailure, ...]
+        [RotateRecognizer, { enable: false }],
+        [PinchRecognizer, { enable: false }, ['rotate']],
+        [SwipeRecognizer,{ direction: DIRECTION_HORIZONTAL }],
+        [PanRecognizer, { direction: DIRECTION_HORIZONTAL }, ['swipe']],
+        [TapRecognizer],
+        [TapRecognizer, { event: 'doubletap', taps: 2 }, ['tap']],
+        [PressRecognizer]
+    ],
+
+    /**
+     * Some CSS properties can be used to improve the working of Hammer.
+     * Add them to this method and they will be set when creating a new Manager.
+     * @namespace
+     */
+    cssProps: {
+        /**
+         * Disables text selection to improve the dragging gesture. Mainly for desktop browsers.
+         * @type {String}
+         * @default 'none'
+         */
+        userSelect: 'none',
+
+        /**
+         * Disable the Windows Phone grippers when pressing an element.
+         * @type {String}
+         * @default 'none'
+         */
+        touchSelect: 'none',
+
+        /**
+         * Disables the default callout shown when you touch and hold a touch target.
+         * On iOS, when you touch and hold a touch target such as a link, Safari displays
+         * a callout containing information about the link. This property allows you to disable that callout.
+         * @type {String}
+         * @default 'none'
+         */
+        touchCallout: 'none',
+
+        /**
+         * Specifies whether zooming is enabled. Used by IE10>
+         * @type {String}
+         * @default 'none'
+         */
+        contentZooming: 'none',
+
+        /**
+         * Specifies that an entire element should be draggable instead of its contents. Mainly for desktop browsers.
+         * @type {String}
+         * @default 'none'
+         */
+        userDrag: 'none',
+
+        /**
+         * Overrides the highlight color shown when the user taps a link or a JavaScript
+         * clickable element in iOS. This property obeys the alpha value, if specified.
+         * @type {String}
+         * @default 'rgba(0,0,0,0)'
+         */
+        tapHighlightColor: 'rgba(0,0,0,0)'
+    }
+};
+
+var STOP = 1;
+var FORCED_STOP = 2;
+
+/**
+ * Manager
+ * @param {HTMLElement} element
+ * @param {Object} [options]
+ * @constructor
+ */
+function Manager(element, options) {
+    options = options || {};
+
+    this.options = merge(options, Hammer.defaults);
+    this.options.inputTarget = this.options.inputTarget || element;
+
+    this.handlers = {};
+    this.session = {};
+    this.recognizers = [];
+
+    this.element = element;
+    this.input = createInputInstance(this);
+    this.touchAction = new TouchAction(this, this.options.touchAction);
+
+    toggleCssProps(this, true);
+
+    each(options.recognizers, function(item) {
+        var recognizer = this.add(new (item[0])(item[1]));
+        item[2] && recognizer.recognizeWith(item[2]);
+        item[3] && recognizer.requireFailure(item[3]);
+    }, this);
+}
+
+Manager.prototype = {
+    /**
+     * set options
+     * @param {Object} options
+     * @returns {Manager}
+     */
+    set: function(options) {
+        extend(this.options, options);
+
+        // Options that need a little more setup
+        if (options.touchAction) {
+            this.touchAction.update();
+        }
+        if (options.inputTarget) {
+            // Clean up existing event listeners and reinitialize
+            this.input.destroy();
+            this.input.target = options.inputTarget;
+            this.input.init();
+        }
+        return this;
+    },
+
+    /**
+     * stop recognizing for this session.
+     * This session will be discarded, when a new [input]start event is fired.
+     * When forced, the recognizer cycle is stopped immediately.
+     * @param {Boolean} [force]
+     */
+    stop: function(force) {
+        this.session.stopped = force ? FORCED_STOP : STOP;
+    },
+
+    /**
+     * run the recognizers!
+     * called by the inputHandler function on every movement of the pointers (touches)
+     * it walks through all the recognizers and tries to detect the gesture that is being made
+     * @param {Object} inputData
+     */
+    recognize: function(inputData) {
+        var session = this.session;
+        if (session.stopped) {
+            return;
+        }
+
+        // run the touch-action polyfill
+        this.touchAction.preventDefaults(inputData);
+
+        var recognizer;
+        var recognizers = this.recognizers;
+
+        // this holds the recognizer that is being recognized.
+        // so the recognizer's state needs to be BEGAN, CHANGED, ENDED or RECOGNIZED
+        // if no recognizer is detecting a thing, it is set to `null`
+        var curRecognizer = session.curRecognizer;
+
+        // reset when the last recognizer is recognized
+        // or when we're in a new session
+        if (!curRecognizer || (curRecognizer && curRecognizer.state & STATE_RECOGNIZED)) {
+            curRecognizer = session.curRecognizer = null;
+        }
+
+        var i = 0;
+        while (i < recognizers.length) {
+            recognizer = recognizers[i];
+
+            // find out if we are allowed try to recognize the input for this one.
+            // 1.   allow if the session is NOT forced stopped (see the .stop() method)
+            // 2.   allow if we still haven't recognized a gesture in this session, or the this recognizer is the one
+            //      that is being recognized.
+            // 3.   allow if the recognizer is allowed to run simultaneous with the current recognized recognizer.
+            //      this can be setup with the `recognizeWith()` method on the recognizer.
+            if (session.stopped !== FORCED_STOP && ( // 1
+                    !curRecognizer || recognizer == curRecognizer || // 2
+                    recognizer.canRecognizeWith(curRecognizer))) { // 3
+                recognizer.recognize(inputData);
+            } else {
+                recognizer.reset();
+            }
+
+            // if the recognizer has been recognizing the input as a valid gesture, we want to store this one as the
+            // current active recognizer. but only if we don't already have an active recognizer
+            if (!curRecognizer && recognizer.state & (STATE_BEGAN | STATE_CHANGED | STATE_ENDED)) {
+                curRecognizer = session.curRecognizer = recognizer;
+            }
+            i++;
+        }
+    },
+
+    /**
+     * get a recognizer by its event name.
+     * @param {Recognizer|String} recognizer
+     * @returns {Recognizer|Null}
+     */
+    get: function(recognizer) {
+        if (recognizer instanceof Recognizer) {
+            return recognizer;
+        }
+
+        var recognizers = this.recognizers;
+        for (var i = 0; i < recognizers.length; i++) {
+            if (recognizers[i].options.event == recognizer) {
+                return recognizers[i];
+            }
+        }
+        return null;
+    },
+
+    /**
+     * add a recognizer to the manager
+     * existing recognizers with the same event name will be removed
+     * @param {Recognizer} recognizer
+     * @returns {Recognizer|Manager}
+     */
+    add: function(recognizer) {
+        if (invokeArrayArg(recognizer, 'add', this)) {
+            return this;
+        }
+
+        // remove existing
+        var existing = this.get(recognizer.options.event);
+        if (existing) {
+            this.remove(existing);
+        }
+
+        this.recognizers.push(recognizer);
+        recognizer.manager = this;
+
+        this.touchAction.update();
+        return recognizer;
+    },
+
+    /**
+     * remove a recognizer by name or instance
+     * @param {Recognizer|String} recognizer
+     * @returns {Manager}
+     */
+    remove: function(recognizer) {
+        if (invokeArrayArg(recognizer, 'remove', this)) {
+            return this;
+        }
+
+        var recognizers = this.recognizers;
+        recognizer = this.get(recognizer);
+        recognizers.splice(inArray(recognizers, recognizer), 1);
+
+        this.touchAction.update();
+        return this;
+    },
+
+    /**
+     * bind event
+     * @param {String} events
+     * @param {Function} handler
+     * @returns {EventEmitter} this
+     */
+    on: function(events, handler) {
+        var handlers = this.handlers;
+        each(splitStr(events), function(event) {
+            handlers[event] = handlers[event] || [];
+            handlers[event].push(handler);
+        });
+        return this;
+    },
+
+    /**
+     * unbind event, leave emit blank to remove all handlers
+     * @param {String} events
+     * @param {Function} [handler]
+     * @returns {EventEmitter} this
+     */
+    off: function(events, handler) {
+        var handlers = this.handlers;
+        each(splitStr(events), function(event) {
+            if (!handler) {
+                delete handlers[event];
+            } else {
+                handlers[event].splice(inArray(handlers[event], handler), 1);
+            }
+        });
+        return this;
+    },
+
+    /**
+     * emit event to the listeners
+     * @param {String} event
+     * @param {Object} data
+     */
+    emit: function(event, data) {
+        // we also want to trigger dom events
+        if (this.options.domEvents) {
+            triggerDomEvent(event, data);
+        }
+
+        // no handlers, so skip it all
+        var handlers = this.handlers[event] && this.handlers[event].slice();
+        if (!handlers || !handlers.length) {
+            return;
+        }
+
+        data.type = event;
+        data.preventDefault = function() {
+            data.srcEvent.preventDefault();
+        };
+
+        var i = 0;
+        while (i < handlers.length) {
+            handlers[i](data);
+            i++;
+        }
+    },
+
+    /**
+     * destroy the manager and unbinds all events
+     * it doesn't unbind dom events, that is the user own responsibility
+     */
+    destroy: function() {
+        this.element && toggleCssProps(this, false);
+
+        this.handlers = {};
+        this.session = {};
+        this.input.destroy();
+        this.element = null;
+    }
+};
+
+/**
+ * add/remove the css properties as defined in manager.options.cssProps
+ * @param {Manager} manager
+ * @param {Boolean} add
+ */
+function toggleCssProps(manager, add) {
+    var element = manager.element;
+    each(manager.options.cssProps, function(value, name) {
+        element.style[prefixed(element.style, name)] = add ? value : '';
+    });
+}
+
+/**
+ * trigger dom event
+ * @param {String} event
+ * @param {Object} data
+ */
+function triggerDomEvent(event, data) {
+    var gestureEvent = document.createEvent('Event');
+    gestureEvent.initEvent(event, true, true);
+    gestureEvent.gesture = data;
+    data.target.dispatchEvent(gestureEvent);
+}
+
+extend(Hammer, {
+    INPUT_START: INPUT_START,
+    INPUT_MOVE: INPUT_MOVE,
+    INPUT_END: INPUT_END,
+    INPUT_CANCEL: INPUT_CANCEL,
+
+    STATE_POSSIBLE: STATE_POSSIBLE,
+    STATE_BEGAN: STATE_BEGAN,
+    STATE_CHANGED: STATE_CHANGED,
+    STATE_ENDED: STATE_ENDED,
+    STATE_RECOGNIZED: STATE_RECOGNIZED,
+    STATE_CANCELLED: STATE_CANCELLED,
+    STATE_FAILED: STATE_FAILED,
+
+    DIRECTION_NONE: DIRECTION_NONE,
+    DIRECTION_LEFT: DIRECTION_LEFT,
+    DIRECTION_RIGHT: DIRECTION_RIGHT,
+    DIRECTION_UP: DIRECTION_UP,
+    DIRECTION_DOWN: DIRECTION_DOWN,
+    DIRECTION_HORIZONTAL: DIRECTION_HORIZONTAL,
+    DIRECTION_VERTICAL: DIRECTION_VERTICAL,
+    DIRECTION_ALL: DIRECTION_ALL,
+
+    Manager: Manager,
+    Input: Input,
+    TouchAction: TouchAction,
+
+    TouchInput: TouchInput,
+    MouseInput: MouseInput,
+    PointerEventInput: PointerEventInput,
+    TouchMouseInput: TouchMouseInput,
+    SingleTouchInput: SingleTouchInput,
+
+    Recognizer: Recognizer,
+    AttrRecognizer: AttrRecognizer,
+    Tap: TapRecognizer,
+    Pan: PanRecognizer,
+    Swipe: SwipeRecognizer,
+    Pinch: PinchRecognizer,
+    Rotate: RotateRecognizer,
+    Press: PressRecognizer,
+
+    on: addEventListeners,
+    off: removeEventListeners,
+    each: each,
+    merge: merge,
+    extend: extend,
+    inherit: inherit,
+    bindFn: bindFn,
+    prefixed: prefixed
+});
+
+if (typeof define == TYPE_FUNCTION && define.amd) {
+    define(function() {
+        return Hammer;
+    });
+} else if (typeof module != 'undefined' && module.exports) {
+    module.exports = Hammer;
+} else {
+    window[exportName] = Hammer;
+}
+
+})(window, document, 'Hammer');
 
 
 (function() {
@@ -4173,7 +8357,7 @@ fabric.ElementsParser.prototype.checkIfDone = function() {
     /**
      * Sets x/y of this point
      * @param {Number} x
-     * @return {Number} y
+     * @param {Number} y
      */
     setXY: function (x, y) {
       this.x = x;
@@ -9076,6 +13260,7 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
   addListener = fabric.util.addListener,
   removeListener = fabric.util.removeListener;
 
+  var hammer_mc = undefined;
   fabric.util.object.extend(fabric.Canvas.prototype, /** @lends fabric.Canvas.prototype */ {
 
     /**
@@ -9112,6 +13297,20 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
       addListener(this.upperCanvasEl, 'touchstart', this._onMouseDown);
       addListener(this.upperCanvasEl, 'touchmove', this._onMouseMove);
 
+      if (typeof Hammer !== 'undefined' && typeof Hammer.Manager !== 'undefined') {
+          hammer_mc = new Hammer(this.upperCanvasEl);
+          hammer_mc.get('pinch').set({ enable: true });
+          hammer_mc.get('rotate').set({ enable: true });
+          hammer_mc.get('pinch').recognizeWith('rotate');
+
+          hammer_mc.get('pan').set({ direction: Hammer.DIRECTION_ALL });
+          hammer_mc.get('swipe').set({ direction: Hammer.DIRECTION_ALL });
+          
+
+          hammer_mc.on("pinch pinchstart pinchmove pinchend pinchcancel pinchin pinchout rotate tap doubletap press swipe", this._onGestureHammer);
+          hammer_mc.on("pan", this._onDragHammer);
+
+      }
       if (typeof Event !== 'undefined' && 'add' in Event) {
         Event.add(this.upperCanvasEl, 'gesture', this._onGesture);
         Event.add(this.upperCanvasEl, 'drag', this._onDrag);
@@ -9135,6 +13334,9 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
       this._onLongPress = this._onLongPress.bind(this);
       this._onOrientationChange = this._onOrientationChange.bind(this);
       this._onMouseWheel = this._onMouseWheel.bind(this);
+
+      this._onGestureHammer = this._onGestureHammer.bind(this);
+      this._onDragHammer = this._onDragHammer.bind(this);
     },
 
     /**
@@ -9150,6 +13352,11 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
       removeListener(this.upperCanvasEl, 'touchstart', this._onMouseDown);
       removeListener(this.upperCanvasEl, 'touchmove', this._onMouseMove);
 
+	  if (hammer_mc !== 'undefined')
+      {
+          hammer_mc.off("pinch pinchstart pinchmove pinchend pinchcancel pinchin pinchout rotate tap doubletap press swipe", this._onGestureHammer);
+          hammer_mc.off("pan", this._onDragHammer);
+      }
       if (typeof Event !== 'undefined' && 'remove' in Event) {
         Event.remove(this.upperCanvasEl, 'gesture', this._onGesture);
         Event.remove(this.upperCanvasEl, 'drag', this._onDrag);
@@ -9168,6 +13375,16 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
       this.__onTransformGesture && this.__onTransformGesture(e, self);
     },
 
+	 /**
+     * @private
+     * @param {Event} [e] Event object fired on Hammer.js gesture
+
+     */
+    _onGestureHammer: function(e) {
+
+        this.__onHammerTransformGesture && this.__onHammerTransformGesture(e);
+    },
+	
     /**
      * @private
      * @param {Event} [e] Event object fired on Event.js drag
@@ -9177,6 +13394,13 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
       this.__onDrag && this.__onDrag(e, self);
     },
 
+	/**
+    * @private
+	* @param {Event} [e] Event object fired on Hammer.js drag
+	*/
+    _onDragHammer: function (e) {
+        this.__onDragHammer && this.__onDragHammer(e);
+    },
     /**
      * @private
      * @param {Event} [e] Event object fired on Event.js wheel event
@@ -9318,6 +13542,9 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
         return;
       }
 
+	  if (typeof e.touches !== 'undefined' && e.touches.length > 1) {
+        return;
+      }
       if (this._currentTransform) {
         this._finalizeCurrentTransform();
         target = this._currentTransform.target;
@@ -9412,6 +13639,11 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
           pointer = fabric.util.transformPoint(this.getPointer(e, true), ivt);
       this.freeDrawingBrush.onMouseDown(pointer);
       this.fire('mouse:down', { e: e });
+
+      var target = this.findTarget(e);
+      if (typeof target !== 'undefined') {
+        target.fire('mousedown', { e: e, target: target });
+      }
     },
 
     /**
@@ -9426,6 +13658,11 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
       }
       this.setCursor(this.freeDrawingCursor);
       this.fire('mouse:move', { e: e });
+
+      var target = this.findTarget(e);
+      if (typeof target !== 'undefined') {
+        target.fire('mousemove', { e: e, target: target });
+      }
     },
 
     /**
@@ -9439,6 +13676,11 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
       }
       this.freeDrawingBrush.onMouseUp();
       this.fire('mouse:up', { e: e });
+
+      var target = this.findTarget(e);
+      if (typeof target !== 'undefined') {
+        target.fire('mouseup', { e: e, target: target });
+      }
     },
 
     /**
@@ -10427,6 +14669,393 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
 });
 
 
+/**
+ * An even better animation frame.
+ *
+ * @copyright Oleg Slobodskoi 2013
+ * @website https://github.com/kof/animationFrame
+ * @license MIT
+ */
+
+;(function(window) {
+'use strict'
+
+var nativeRequestAnimationFrame,
+    nativeCancelAnimationFrame
+
+// Grab the native request and cancel functions.
+;(function() {
+    var i,
+        vendors = ['webkit', 'moz', 'ms', 'o'],
+        top
+
+    // Test if we are within a foreign domain. Use raf from the top if possible.
+    try {
+        // Accessing .name will throw SecurityError within a foreign domain.
+        window.top.name
+        top = window.top
+    } catch(e) {
+        top = window
+    }
+
+    nativeRequestAnimationFrame = top.requestAnimationFrame
+    nativeCancelAnimationFrame = top.cancelAnimationFrame || top.cancelRequestAnimationFrame
+
+
+    // Grab the native implementation.
+    for (i = 0; i < vendors.length && !nativeRequestAnimationFrame; i++) {
+        nativeRequestAnimationFrame = top[vendors[i] + 'RequestAnimationFrame']
+        nativeCancelAnimationFrame = top[vendors[i] + 'CancelAnimationFrame'] ||
+            top[vendors[i] + 'CancelRequestAnimationFrame']
+    }
+
+    // Test if native implementation works.
+    // There are some issues on ios6
+    // http://shitwebkitdoes.tumblr.com/post/47186945856/native-requestanimationframe-broken-on-ios-6
+    // https://gist.github.com/KrofDrakula/5318048
+    nativeRequestAnimationFrame && nativeRequestAnimationFrame(function() {
+        AnimationFrame.hasNative = true
+    })
+}())
+
+/**
+ * Animation frame constructor.
+ *
+ * Options:
+ *   - `useNative` use the native animation frame if possible, defaults to true
+ *   - `frameRate` pass a custom frame rate
+ *
+ * @param {Object|Number} options
+ */
+function AnimationFrame(options) {
+    if (!(this instanceof AnimationFrame)) return new AnimationFrame(options)
+    options || (options = {})
+
+    // Its a frame rate.
+    if (typeof options == 'number') options = {frameRate: options}
+    options.useNative != null || (options.useNative = true)
+    this.options = options
+    this.frameRate = options.frameRate || AnimationFrame.FRAME_RATE
+    this._frameLength = 1000 / this.frameRate
+    this._isCustomFrameRate = this.frameRate !== AnimationFrame.FRAME_RATE
+    this._timeoutId = null
+    this._callbacks = {}
+    this._lastTickTime = 0
+    this._tickCounter = 0
+}
+
+/**
+ * Default frame rate used for shim implementation. Native implementation
+ * will use the screen frame rate, but js have no way to detect it.
+ *
+ * If you know your target device, define it manually.
+ *
+ * @type {Number}
+ * @api public
+ */
+AnimationFrame.FRAME_RATE = 60
+
+/**
+ * Replace the globally defined implementation or define it globally.
+ *
+ * @param {Object|Number} [options]
+ * @api public
+ */
+AnimationFrame.shim = function(options) {
+    var animationFrame = new AnimationFrame(options)
+
+    window.requestAnimationFrame = function(callback) {
+        return animationFrame.request(callback)
+    }
+    window.cancelAnimationFrame = function(id) {
+        return animationFrame.cancel(id)
+    }
+
+    return animationFrame
+}
+
+/**
+ * Crossplatform Date.now()
+ *
+ * @return {Number} time in ms
+ * @api public
+ */
+AnimationFrame.now = Date.now || function() {
+    return (new Date).getTime()
+}
+
+/**
+ * Replacement for PerformanceTiming.navigationStart for the case when
+ * performance.now is not implemented.
+ *
+ * https://developer.mozilla.org/en-US/docs/Web/API/PerformanceTiming.navigationStart
+ *
+ * @type {Number}
+ * @api public
+ */
+AnimationFrame.navigationStart = AnimationFrame.now()
+
+/**
+ * Crossplatform performance.now()
+ *
+ * https://developer.mozilla.org/en-US/docs/Web/API/Performance.now()
+ *
+ * @return {Number} relative time in ms
+ * @api public
+ */
+AnimationFrame.perfNow = function() {
+    if (window.performance && window.performance.now) return window.performance.now()
+    return AnimationFrame.now() - AnimationFrame.navigationStart
+}
+
+/**
+ * Is native animation frame implemented. The right value is set during feature
+ * detection step.
+ *
+ * @type {Boolean}
+ * @api public
+ */
+AnimationFrame.hasNative = false
+
+/**
+ * Request animation frame.
+ * We will use the native RAF as soon as we know it does works.
+ *
+ * @param {Function} callback
+ * @return {Number} timeout id or requested animation frame id
+ * @api public
+ */
+AnimationFrame.prototype.request = function(callback) {
+    var self = this,
+        delay
+
+    // Alawys inc counter to ensure it never has a conflict with the native counter.
+    // After the feature test phase we don't know exactly which implementation has been used.
+    // Therefore on #cancel we do it for both.
+    ++this._tickCounter
+
+    if (AnimationFrame.hasNative && self.options.useNative && !this._isCustomFrameRate) {
+        return nativeRequestAnimationFrame(callback)
+    }
+
+    if (!callback) throw new TypeError('Not enough arguments')
+
+    if (this._timeoutId == null) {
+        // Much faster than Math.max
+        // http://jsperf.com/math-max-vs-comparison/3
+        // http://jsperf.com/date-now-vs-date-gettime/11
+        delay = this._frameLength + this._lastTickTime - AnimationFrame.now()
+        if (delay < 0) delay = 0
+
+        this._timeoutId = window.setTimeout(function() {
+            var id
+
+            self._lastTickTime = AnimationFrame.now()
+            self._timeoutId = null
+            ++self._tickCounter
+
+            for (id in self._callbacks) {
+                if (self._callbacks[id]) {
+                    if (AnimationFrame.hasNative && self.options.useNative) {
+                        nativeRequestAnimationFrame(self._callbacks[id])
+                    } else {
+                        self._callbacks[id](AnimationFrame.perfNow())
+                    }
+                    delete self._callbacks[id]
+                }
+            }
+        }, delay)
+    }
+
+    this._callbacks[this._tickCounter] = callback
+    return this._tickCounter
+}
+
+/**
+ * Cancel animation frame.
+ *
+ * @param {Number} timeout id or requested animation frame id
+ *
+ * @api public
+ */
+AnimationFrame.prototype.cancel = function(id) {
+    if (AnimationFrame.hasNative && this.options.useNative) nativeCancelAnimationFrame(id)
+    delete this._callbacks[id]
+}
+
+
+// Support commonjs wrapper, amd define and plain window.
+if (typeof exports == 'object' && typeof module == 'object') {
+    module.exports = AnimationFrame
+} else if (typeof define == 'function' && define.amd) {
+    define(function() { return AnimationFrame })
+} else {
+    window.AnimationFrame = AnimationFrame
+}
+
+}(window));
+
+
+(function() {
+
+  var degreesToRadians = fabric.util.degreesToRadians,
+      radiansToDegrees = fabric.util.radiansToDegrees;
+  var animationFrame = new AnimationFrame();
+  fabric.util.object.extend(fabric.Canvas.prototype, /** @lends fabric.Canvas.prototype */ {
+
+    /**
+     * Method that defines actions when an Hammr.js gesture is detected on an object. Currently only supports
+     * 2 finger gestures.
+     *
+     * @param {Event} e Event object by Hammer.js
+     */
+      __onHammerTransformGesture: function (e) {
+
+          if (this.isDrawingMode || !e.pointers) {
+              return;
+          }
+          var target = undefined;
+          if (this._currentTransform) {
+              target = this._currentTransform.target;
+          }
+          else {
+              target = this.findTarget(e.srcEvent);
+          }
+
+          if ('undefined' !== typeof target) {
+              this.__gesturesParams = {
+                  'e': e,
+                  'target': target
+               };
+			 
+              this.__gesturesFrame();
+              //this.__gesturesRenderer();
+              //           this.__gesturesInterval(e, self, target);
+          }
+
+
+
+          this.fire('touch:gesture', { target: target, e: e });
+      },
+
+      // unused
+      __gesturesParams: null,
+      // unused
+      __gesturesFrame: function () {
+          var that = this;
+          if (this.__gesturesParams === null || this._currentTransform === null) {
+              return;
+          }
+
+
+          animationFrame.request(function (time) {
+              that.__gesturesRenderer(that, time);
+              //console.log('gesture animation frame');
+          });
+      },
+      __gesturesRenderer: function (self,time) {
+
+          if (self.__gesturesParams === null || self._currentTransform === null) {
+              return;
+          }
+
+          var e = self.__gesturesParams.e;
+          
+          var target = self.__gesturesParams.target;
+
+          var t = self._currentTransform;
+
+          if (e.type === 'pinchend') {
+              if (t) {
+                  self._finalizeCurrentTransform();
+              }
+          }
+          else {
+
+              
+              t.action = 'scale';
+              //            if(this._shouldCenterTransform(e, target)) {
+              t.originX = t.originY = 'center';
+              self._setOriginToCenter(t.target);
+              //            }
+
+              self._scaleObjectBy(e.scale);
+
+              if (e.rotation !== 0) {
+                  t.action = 'rotate';
+                  self._rotateObjectByAngle(e.rotation);
+              }
+          }
+          self.renderAll();
+          t.action = 'drag';
+      },
+
+    /**
+     * Method that defines actions when an Hammer.js pan is detected.
+     *
+     * @param {Event} e Event object by Event.js
+     * @param {Event} self Event proxy object by Event.js
+     */
+    __onDragHammer: function(e, self) {
+      this.fire('touch:drag', { e: e });
+    },
+
+   
+    
+    /**
+     * Scales an object by a factor
+     * @param {Number} s The scale factor to apply to the current scale level
+     * @param {String} by Either 'x' or 'y' - specifies dimension constraint by which to scale an object.
+     *                    When not provided, an object is scaled by both dimensions equally
+     */
+    _scaleObjectBy: function (s, by) {
+        var t = this._currentTransform,
+                target = t.target,
+                lockScalingX = target.get('lockScalingX'),
+                lockScalingY = target.get('lockScalingY');
+
+        if (lockScalingX && lockScalingY)
+            return;
+
+        target._scaling = true;
+
+        var constraintPosition = target.translateToOriginPoint(target.getCenterPoint(), t.originX, t.originY);
+
+        if (!by) {
+            t.newScaleX = t.scaleX * s;
+            t.newScaleY = t.scaleY * s;
+            if (!lockScalingX) {
+                target.set('scaleX', t.scaleX * s);
+            }
+            if (!lockScalingY) {
+                target.set('scaleY', t.scaleY * s);
+            }
+        }
+        //            else if (by === 'x' && !target.get('lockUniScaling')) {
+        //                lockScalingX || target.set('scaleX', t.scaleX * s);
+        //            }
+        //            else if (by === 'y' && !target.get('lockUniScaling')) {
+        //                lockScalingY || target.set('scaleY', t.scaleY * s);
+        //            }
+
+        target.setPositionByOrigin(constraintPosition, t.originX, t.originY);
+    },
+      /**
+       * Rotates object by an angle
+       * @param curAngle {Number} the angle of rotation in degrees
+       */
+    _rotateObjectByAngle: function (curAngle) {
+        var t = this._currentTransform;
+
+        if (t.target.get('lockRotation'))
+            return;
+        t.target.angle = radiansToDegrees(degreesToRadians(curAngle) + t.theta);
+    }
+
+  });
+})();
+
+
 (function(global) {
 
   'use strict';
@@ -11392,7 +16021,7 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
      */
     render: function(ctx, noTransform) {
       // do not render if width/height are zeros or object is not visible
-      if (this.width === 0 || this.height === 0 || !this.visible) {
+      if ((this.width === 0 && this.height === 0) || !this.visible) {
         return;
       }
 
@@ -12513,7 +17142,7 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
      * @chainable
      */
     setCoords: function() {
-      var strokeWidth = this.strokeWidth > 1 ? this.strokeWidth : 0,
+      var strokeWidth = this.strokeWidth,
           theta = degreesToRadians(this.angle),
           vpt = this.getViewportTransform(),
           f = function (p) {
@@ -12522,10 +17151,11 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
           w = this.width,
           h = this.height,
           capped = this.strokeLineCap === 'round' || this.strokeLineCap === 'square',
-          vLine = this.type === 'line' && this.width === 1,
-          hLine = this.type === 'line' && this.height === 1,
-          strokeW = (capped && hLine) || this.type !== 'line',
-          strokeH = (capped && vLine) || this.type !== 'line';
+          vLine = this.type === 'line' && this.width === 0,
+          hLine = this.type === 'line' && this.height === 0,
+          sLine = vLine || hLine,
+          strokeW = (capped && hLine) || !sLine,
+          strokeH = (capped && vLine) || !sLine;
 
       if (vLine) {
         w = strokeWidth;
@@ -13155,12 +17785,14 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
 
       var w = this.getWidth(),
           h = this.getHeight(),
-          strokeWidth = this.strokeWidth > 1 ? this.strokeWidth : 0,
+          strokeWidth = this.strokeWidth,
           capped = this.strokeLineCap === 'round' || this.strokeLineCap === 'square',
-          vLine = this.type === 'line' && this.width === 1,
-          hLine = this.type === 'line' && this.height === 1,
-          strokeW = (capped && hLine) || this.type !== 'line',
-          strokeH = (capped && vLine) || this.type !== 'line';
+          vLine = this.type === 'line' && this.width === 0,
+          hLine = this.type === 'line' && this.height === 0,
+          sLine = vLine || hLine,
+          strokeW = (capped && hLine) || !sLine,
+          strokeH = (capped && vLine) || !sLine;
+
       if (vLine) {
         w = strokeWidth / scaleX;
       }
@@ -13219,14 +17851,15 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
       var size = this.cornerSize,
           size2 = size / 2,
           vpt = this.getViewportTransform(),
-          strokeWidth = this.strokeWidth > 1 ? this.strokeWidth : 0,
+          strokeWidth = this.strokeWidth,
           w = this.width,
           h = this.height,
           capped = this.strokeLineCap === 'round' || this.strokeLineCap === 'square',
-          vLine = this.type === 'line' && this.width === 1,
-          hLine = this.type === 'line' && this.height === 1,
-          strokeW = (capped && hLine) || this.type !== 'line',
-          strokeH = (capped && vLine) || this.type !== 'line';
+          vLine = this.type === 'line' && this.width === 0,
+          hLine = this.type === 'line' && this.height === 0,
+          sLine = vLine || hLine,
+          strokeW = (capped && hLine) || !sLine,
+          strokeH = (capped && vLine) || !sLine;
 
       if (vLine) {
         w = strokeWidth;
@@ -13712,8 +18345,8 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
     _setWidthHeight: function(options) {
       options || (options = { });
 
-      this.width = Math.abs(this.x2 - this.x1) || 1;
-      this.height = Math.abs(this.y2 - this.y1) || 1;
+      this.width = Math.abs(this.x2 - this.x1);
+      this.height = Math.abs(this.y2 - this.y1);
 
       this.left = 'left' in options
         ? options.left
@@ -13782,30 +18415,21 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
 
       if (noTransform) {
         //  Line coords are distances from left-top of canvas to origin of line.
-        //
         //  To render line in a path-group, we need to translate them to
         //  distances from center of path-group to center of line.
         var cp = this.getCenterPoint();
         ctx.translate(
-          cp.x,
-          cp.y
+          cp.x - this.strokeWidth / 2,
+          cp.y - this.strokeWidth / 2
         );
       }
 
       if (!this.strokeDashArray || this.strokeDashArray && supportsLineDash) {
-
         // move from center (of virtual box) to its left/top corner
         // we can't assume x1, y1 is top left and x2, y2 is bottom right
-        var xMult = this.x1 <= this.x2 ? -1 : 1,
-            yMult = this.y1 <= this.y2 ? -1 : 1;
-
-        ctx.moveTo(
-          this.width === 1 ? 0 : (xMult * this.width / 2),
-          this.height === 1 ? 0 : (yMult * this.height / 2));
-
-        ctx.lineTo(
-          this.width === 1 ? 0 : (xMult * -1 * this.width / 2),
-          this.height === 1 ? 0 : (yMult * -1 * this.height / 2));
+        var p = this.calcLinePoints();
+        ctx.moveTo(p.x1, p.y1);
+        ctx.lineTo(p.x2, p.y2);
       }
 
       ctx.lineWidth = this.strokeWidth;
@@ -13824,14 +18448,10 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
      * @param {CanvasRenderingContext2D} ctx Context to render on
      */
     _renderDashedStroke: function(ctx) {
-      var
-        xMult = this.x1 <= this.x2 ? -1 : 1,
-        yMult = this.y1 <= this.y2 ? -1 : 1,
-        x = this.width === 1 ? 0 : xMult * this.width / 2,
-        y = this.height === 1 ? 0 : yMult * this.height / 2;
+      var p = this.calcLinePoints();
 
       ctx.beginPath();
-      fabric.util.drawDashedLine(ctx, x, y, -x, -y, this.strokeDashArray);
+      fabric.util.drawDashedLine(ctx, p.x1, p.y1, p.x2, p.y2, this.strokeDashArray);
       ctx.closePath();
     },
 
@@ -13852,10 +18472,10 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
     calcLinePoints: function() {
       var xMult = this.x1 <= this.x2 ? -1 : 1,
           yMult = this.y1 <= this.y2 ? -1 : 1,
-          x1 = (xMult * this.width / 2),
-          y1 = (yMult * this.height / 2),
-          x2 = (xMult * -1 * this.width / 2),
-          y2 = (yMult * -1 * this.height / 2);
+          x1 = (xMult * this.width * 0.5),
+          y1 = (yMult * this.height * 0.5),
+          x2 = (xMult * this.width * -0.5),
+          y2 = (yMult * this.height * -0.5);
 
       return {
         x1: x1,
@@ -20207,6 +24827,87 @@ fabric.Image.filters.BaseFilter = fabric.util.createClass(/** @lends fabric.Imag
 })(typeof exports !== 'undefined' ? exports : this);
 
 
+/**
+ * @private
+ * @param {CanvasRenderingContext2D} ctx Context to render on
+ */
+fabric.util.object.extend(fabric.Text.prototype, {
+  _renderViaCufon: function(ctx) {
+
+    var o = Cufon.textOptions || (Cufon.textOptions = { });
+
+    // export options to be used by cufon.js
+    o.left = this.left;
+    o.top = this.top;
+    o.context = ctx;
+    o.color = this.fill;
+
+    var el = this._initDummyElementForCufon();
+
+    // set "cursor" to top/left corner
+    this.transform(ctx);
+
+    // draw text
+    Cufon.replaceElement(el, {
+      engine: 'canvas',
+      separate: 'none',
+      fontFamily: this.fontFamily,
+      fontWeight: this.fontWeight,
+      textDecoration: this.textDecoration,
+      textShadow: this.shadow && this.shadow.toString(),
+      textAlign: this.textAlign,
+      fontStyle: this.fontStyle,
+      lineHeight: this.lineHeight,
+      stroke: this.stroke,
+      strokeWidth: this.strokeWidth,
+      backgroundColor: this.backgroundColor,
+      textBackgroundColor: this.textBackgroundColor
+    });
+
+    // update width, height
+    this.width = o.width;
+    this.height = o.height;
+
+    this._totalLineHeight = o.totalLineHeight;
+    this._fontAscent = o.fontAscent;
+    this._boundaries = o.boundaries;
+
+    el = null;
+
+    // need to set coords _after_ the width/height was retreived from Cufon
+    this.setCoords();
+  },
+
+  /**
+   * @private
+   */
+  _initDummyElementForCufon: function() {
+    var el = fabric.document.createElement('pre'),
+        container = fabric.document.createElement('div');
+
+    // Cufon doesn't play nice with textDecoration=underline if element doesn't have a parent
+    container.appendChild(el);
+
+    //jscs:disable requireCamelCaseOrUpperCaseIdentifiers
+    if (typeof G_vmlCanvasManager === 'undefined') {
+      el.innerHTML = this.text;
+    }
+    //jscs:enable requireCamelCaseOrUpperCaseIdentifiers
+    else {
+      // IE 7 & 8 drop newlines and white space on text nodes
+      // see: http://web.student.tuwien.ac.at/~e0226430/innerHtmlQuirk.html
+      // see: http://www.w3schools.com/dom/dom_mozilla_vs_ie.asp
+      el.innerText =  this.text.replace(/\r?\n/gi, '\r');
+    }
+
+    el.style.fontSize = this.fontSize + 'px';
+    el.style.letterSpacing = 'normal';
+
+    return el;
+  }
+});
+
+
 (function() {
 
   var clone = fabric.util.object.clone;
@@ -21995,11 +26696,7 @@ fabric.Image.filters.BaseFilter = fabric.util.createClass(/** @lends fabric.Imag
      * @param {Array} [styles] Styles to insert
      */
     insertStyleObjects: function(_chars, isEndOfLine, styles) {
-
-      // short-circuit
-      if (this.isEmptyStyles()) {
-        return;
-      }
+      // removed shortcircuit over isEmptyStyles
 
       var cursorLocation = this.get2DCursorLocation(),
           lineIndex = cursorLocation.lineIndex,

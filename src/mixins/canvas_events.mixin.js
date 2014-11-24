@@ -13,6 +13,7 @@
   addListener = fabric.util.addListener,
   removeListener = fabric.util.removeListener;
 
+  var hammer_mc = undefined;
   fabric.util.object.extend(fabric.Canvas.prototype, /** @lends fabric.Canvas.prototype */ {
 
     /**
@@ -49,6 +50,20 @@
       addListener(this.upperCanvasEl, 'touchstart', this._onMouseDown);
       addListener(this.upperCanvasEl, 'touchmove', this._onMouseMove);
 
+      if (typeof Hammer !== 'undefined' && typeof Hammer.Manager !== 'undefined') {
+          hammer_mc = new Hammer(this.upperCanvasEl);
+          hammer_mc.get('pinch').set({ enable: true });
+          hammer_mc.get('rotate').set({ enable: true });
+          hammer_mc.get('pinch').recognizeWith('rotate');
+
+          hammer_mc.get('pan').set({ direction: Hammer.DIRECTION_ALL });
+          hammer_mc.get('swipe').set({ direction: Hammer.DIRECTION_ALL });
+          
+
+          hammer_mc.on("pinch pinchstart pinchmove pinchend pinchcancel pinchin pinchout rotate tap doubletap press swipe", this._onGestureHammer);
+          hammer_mc.on("pan", this._onDragHammer);
+
+      }
       if (typeof Event !== 'undefined' && 'add' in Event) {
         Event.add(this.upperCanvasEl, 'gesture', this._onGesture);
         Event.add(this.upperCanvasEl, 'drag', this._onDrag);
@@ -72,6 +87,9 @@
       this._onLongPress = this._onLongPress.bind(this);
       this._onOrientationChange = this._onOrientationChange.bind(this);
       this._onMouseWheel = this._onMouseWheel.bind(this);
+
+      this._onGestureHammer = this._onGestureHammer.bind(this);
+      this._onDragHammer = this._onDragHammer.bind(this);
     },
 
     /**
@@ -87,6 +105,11 @@
       removeListener(this.upperCanvasEl, 'touchstart', this._onMouseDown);
       removeListener(this.upperCanvasEl, 'touchmove', this._onMouseMove);
 
+	  if (hammer_mc !== 'undefined')
+      {
+          hammer_mc.off("pinch pinchstart pinchmove pinchend pinchcancel pinchin pinchout rotate tap doubletap press swipe", this._onGestureHammer);
+          hammer_mc.off("pan", this._onDragHammer);
+      }
       if (typeof Event !== 'undefined' && 'remove' in Event) {
         Event.remove(this.upperCanvasEl, 'gesture', this._onGesture);
         Event.remove(this.upperCanvasEl, 'drag', this._onDrag);
@@ -105,6 +128,16 @@
       this.__onTransformGesture && this.__onTransformGesture(e, self);
     },
 
+	 /**
+     * @private
+     * @param {Event} [e] Event object fired on Hammer.js gesture
+
+     */
+    _onGestureHammer: function(e) {
+
+        this.__onHammerTransformGesture && this.__onHammerTransformGesture(e);
+    },
+	
     /**
      * @private
      * @param {Event} [e] Event object fired on Event.js drag
@@ -114,6 +147,13 @@
       this.__onDrag && this.__onDrag(e, self);
     },
 
+	/**
+    * @private
+	* @param {Event} [e] Event object fired on Hammer.js drag
+	*/
+    _onDragHammer: function (e) {
+        this.__onDragHammer && this.__onDragHammer(e);
+    },
     /**
      * @private
      * @param {Event} [e] Event object fired on Event.js wheel event
@@ -255,6 +295,9 @@
         return;
       }
 
+	  if (typeof e.touches !== 'undefined' && e.touches.length > 1) {
+        return;
+      }
       if (this._currentTransform) {
         this._finalizeCurrentTransform();
         target = this._currentTransform.target;

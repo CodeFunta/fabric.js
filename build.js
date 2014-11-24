@@ -143,7 +143,9 @@ var filesToInclude = [
   ifSpecifiedDependencyInclude('text', 'cufon', 'lib/cufon.js'),
   ifSpecifiedDependencyInclude('serialization', 'json', 'lib/json2.js'),
   ifSpecifiedInclude('gestures', 'lib/event.js'),
+  ifSpecifiedInclude('hammer', 'lib/hammer.js'),
 
+  
   'src/mixins/observable.mixin.js',
   'src/mixins/collection.mixin.js',
 
@@ -193,6 +195,8 @@ var filesToInclude = [
 
   ifSpecifiedInclude('serialization', 'src/mixins/canvas_serialization.mixin.js'),
   ifSpecifiedInclude('gestures', 'src/mixins/canvas_gestures.mixin.js'),
+  ifSpecifiedInclude('hammer', 'lib/AnimationFrame.js'),
+  ifSpecifiedInclude('hammer', 'src/mixins/canvas_hammer.mixin.js'),
 
   'src/shapes/object.class.js',
   'src/mixins/object_origin.mixin.js',
