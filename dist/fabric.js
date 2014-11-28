@@ -27979,20 +27979,23 @@ fabric.util.object.extend(fabric.IText.prototype, /** @lends fabric.IText.protot
                 }
                 canvas = fabric.util.createCanvasElement();
                 
-                canvas.setAttribute('width', boundingRect.width);//bigger for correct rotation without cutting when drawimage
-                canvas.setAttribute('height', boundingRect.height);
+                canvas.setAttribute('width', boundingRect.width*2);//bigger for correct drawimage without cutting
+                canvas.setAttribute('height', boundingRect.height*2);
                 object._cacheCanvas = canvas;
                 
                 var origParams = {
                     active: object.get('active'),
                     left: object.getLeft(),
-                    top: object.getTop()
+                    top: object.getTop(),
+                    //originX: object.getOriginX(),
+                    //originY: object.getOriginY(),
                 };
                 var originalCanvas = object.canvas;
 
-                object.set('active', false);
+                object.set({ 'active': false /*, 'originX': 'center', 'originY': 'center'*/ });
               
-                object.setPositionByOrigin(new fabric.Point(canvas.width * 0.5, canvas.height * 0.5), 'center', 'center');
+                object.setPositionByOrigin(new fabric.Point(canvas.width * 0.5, canvas.height * 0.5), object.originX, object.originY);
+                //object.setPositionByOrigin(new fabric.Point(0, 0), object.originX, object.originY);
 
                 var cacheCtx = canvas.getContext('2d');
                 object.render(cacheCtx);
@@ -28001,7 +28004,10 @@ fabric.util.object.extend(fabric.IText.prototype, /** @lends fabric.IText.protot
                 
             }
             ctx.save();
-            ctx.drawImage(canvas, object.getLeft() - canvas.width * 0.5, object.getTop() - canvas.height * 0.5);
+            var cx = -canvas.width * 0.5;
+            var cy = -canvas.height * 0.5;
+            ctx.drawImage(canvas, object.getLeft() + cx, object.getTop() + cy);
+            //ctx.drawImage(canvas, object.getLeft(), object.getTop());
             ctx.restore();
         },
         

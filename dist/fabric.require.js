@@ -13729,8 +13729,8 @@ fabric.util.object.extend(fabric.IText.prototype, {
                     canvas = null;
                 }
                 canvas = fabric.util.createCanvasElement();
-                canvas.setAttribute("width", boundingRect.width);
-                canvas.setAttribute("height", boundingRect.height);
+                canvas.setAttribute("width", boundingRect.width * 2);
+                canvas.setAttribute("height", boundingRect.height * 2);
                 object._cacheCanvas = canvas;
                 var origParams = {
                     active: object.get("active"),
@@ -13738,15 +13738,19 @@ fabric.util.object.extend(fabric.IText.prototype, {
                     top: object.getTop()
                 };
                 var originalCanvas = object.canvas;
-                object.set("active", false);
-                object.setPositionByOrigin(new fabric.Point(canvas.width * .5, canvas.height * .5), "center", "center");
+                object.set({
+                    active: false
+                });
+                object.setPositionByOrigin(new fabric.Point(canvas.width * .5, canvas.height * .5), object.originX, object.originY);
                 var cacheCtx = canvas.getContext("2d");
                 object.render(cacheCtx);
                 cacheCtx.restore();
                 object.set(origParams).setCoords();
             }
             ctx.save();
-            ctx.drawImage(canvas, object.getLeft() - canvas.width * .5, object.getTop() - canvas.height * .5);
+            var cx = -canvas.width * .5;
+            var cy = -canvas.height * .5;
+            ctx.drawImage(canvas, object.getLeft() + cx, object.getTop() + cy);
             ctx.restore();
         },
         clear: function() {
