@@ -195,7 +195,6 @@ var filesToInclude = [
 
   ifSpecifiedInclude('serialization', 'src/mixins/canvas_serialization.mixin.js'),
   ifSpecifiedInclude('gestures', 'src/mixins/canvas_gestures.mixin.js'),
-  ifSpecifiedInclude('hammer', 'lib/AnimationFrame.js'),
   ifSpecifiedInclude('hammer', 'src/mixins/canvas_hammer.mixin.js'),
 
   'src/shapes/object.class.js',
@@ -250,6 +249,9 @@ var filesToInclude = [
   ifSpecifiedInclude('itext', 'src/mixins/itext.svg_export.js'),
 
   ifSpecifiedInclude('node', 'src/node.js'),
+
+  ifSpecifiedInclude('canvas_offscreen', 'src/mixins/static_canvas_offscreen.mixin.js'),
+
 
   ifSpecifiedAMDInclude(amdLib)
 ];

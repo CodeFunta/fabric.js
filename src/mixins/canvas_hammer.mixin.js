@@ -2,7 +2,7 @@
 
   var degreesToRadians = fabric.util.degreesToRadians,
       radiansToDegrees = fabric.util.radiansToDegrees;
-  var animationFrame = new AnimationFrame();
+  var RAF = fabric.util.requestAnimFrame;
   fabric.util.object.extend(fabric.Canvas.prototype, /** @lends fabric.Canvas.prototype */ {
 
     /**
@@ -50,10 +50,11 @@
           }
 
 
-          animationFrame.request(function (time) {
-              that.__gesturesRenderer(that, time);
-              //console.log('gesture animation frame');
-          });
+          //RAF(function (time) {
+          //    that.__gesturesRenderer(that, time);
+          //    //console.log('gesture animation frame');
+          //});
+        that.__gesturesRenderer(that, 0);
       },
       __gesturesRenderer: function (self,time) {
 
@@ -66,15 +67,14 @@
           var target = self.__gesturesParams.target;
 
           var t = self._currentTransform;
-
+          //console.log("Hammer: ", e.type);
           if (e.type === 'pinchend') {
               if (t) {
                   self._finalizeCurrentTransform();
               }
           }
-          else {
+          else if (e.type === 'pinchin' || e.type === 'pinchout' || e.type === 'rotate') {
 
-              
               t.action = 'scale';
               //            if(this._shouldCenterTransform(e, target)) {
               t.originX = t.originY = 'center';

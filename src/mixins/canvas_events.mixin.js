@@ -497,7 +497,7 @@
       var corner;
 
       this.stateful && target.saveState();
-
+	
       // determine if it's a drag or rotate case
       if ((corner = target._findTargetCorner(this.getPointer(e)))) {
         this.onBeforeScaleRotate(target);

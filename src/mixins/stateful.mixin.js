@@ -13,22 +13,45 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
     }, this);
   },
 
-  /**
+    /**
+    * @private
+    */
+  __setupState: function (obj) {
+      obj.originalState = {};
+      if (obj.type === 'group') {
+          obj.forEachObject(function (o) {
+              this.__setupState(o);
+          }, this);
+      }
+      obj.saveState();
+  },
+
+    /**
+    * @private
+    */
+  __saveState: function (obj, options) {
+      obj.stateProperties.forEach(function (prop) {
+          this.originalState[prop] = this.get(prop);
+      }, obj);
+
+      if (options && options.stateProperties) {
+          options.stateProperties.forEach(function (prop) {
+              this.originalState[prop] = this.get(prop);
+          }, obj);
+      }
+      if (obj.type === 'group') {
+          obj.forEachObject(function (o) {
+              this.__saveState(o);
+          }, this);
+      }
+  },
+   /**
    * Saves state of an object
    * @param {Object} [options] Object with additional `stateProperties` array to include when saving state
    * @return {fabric.Object} thisArg
    */
   saveState: function(options) {
-    this.stateProperties.forEach(function(prop) {
-      this.originalState[prop] = this.get(prop);
-    }, this);
-
-    if (options && options.stateProperties) {
-      options.stateProperties.forEach(function(prop) {
-        this.originalState[prop] = this.get(prop);
-      }, this);
-    }
-
+    this.__saveState(this,options);
     return this;
   },
 
@@ -37,9 +60,7 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
    * @return {fabric.Object} thisArg
    */
   setupState: function() {
-    this.originalState = { };
-    this.saveState();
-
+    this.__setupState(this);
     return this;
   }
 });

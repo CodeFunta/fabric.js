@@ -13744,7 +13744,7 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, /** @lends fab
       var corner;
 
       this.stateful && target.saveState();
-
+	
       // determine if it's a drag or rotate case
       if ((corner = target._findTargetCorner(this.getPointer(e)))) {
         this.onBeforeScaleRotate(target);
@@ -14669,238 +14669,11 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
 });
 
 
-/**
- * An even better animation frame.
- *
- * @copyright Oleg Slobodskoi 2013
- * @website https://github.com/kof/animationFrame
- * @license MIT
- */
-
-;(function(window) {
-'use strict'
-
-var nativeRequestAnimationFrame,
-    nativeCancelAnimationFrame
-
-// Grab the native request and cancel functions.
-;(function() {
-    var i,
-        vendors = ['webkit', 'moz', 'ms', 'o'],
-        top
-
-    // Test if we are within a foreign domain. Use raf from the top if possible.
-    try {
-        // Accessing .name will throw SecurityError within a foreign domain.
-        window.top.name
-        top = window.top
-    } catch(e) {
-        top = window
-    }
-
-    nativeRequestAnimationFrame = top.requestAnimationFrame
-    nativeCancelAnimationFrame = top.cancelAnimationFrame || top.cancelRequestAnimationFrame
-
-
-    // Grab the native implementation.
-    for (i = 0; i < vendors.length && !nativeRequestAnimationFrame; i++) {
-        nativeRequestAnimationFrame = top[vendors[i] + 'RequestAnimationFrame']
-        nativeCancelAnimationFrame = top[vendors[i] + 'CancelAnimationFrame'] ||
-            top[vendors[i] + 'CancelRequestAnimationFrame']
-    }
-
-    // Test if native implementation works.
-    // There are some issues on ios6
-    // http://shitwebkitdoes.tumblr.com/post/47186945856/native-requestanimationframe-broken-on-ios-6
-    // https://gist.github.com/KrofDrakula/5318048
-    nativeRequestAnimationFrame && nativeRequestAnimationFrame(function() {
-        AnimationFrame.hasNative = true
-    })
-}())
-
-/**
- * Animation frame constructor.
- *
- * Options:
- *   - `useNative` use the native animation frame if possible, defaults to true
- *   - `frameRate` pass a custom frame rate
- *
- * @param {Object|Number} options
- */
-function AnimationFrame(options) {
-    if (!(this instanceof AnimationFrame)) return new AnimationFrame(options)
-    options || (options = {})
-
-    // Its a frame rate.
-    if (typeof options == 'number') options = {frameRate: options}
-    options.useNative != null || (options.useNative = true)
-    this.options = options
-    this.frameRate = options.frameRate || AnimationFrame.FRAME_RATE
-    this._frameLength = 1000 / this.frameRate
-    this._isCustomFrameRate = this.frameRate !== AnimationFrame.FRAME_RATE
-    this._timeoutId = null
-    this._callbacks = {}
-    this._lastTickTime = 0
-    this._tickCounter = 0
-}
-
-/**
- * Default frame rate used for shim implementation. Native implementation
- * will use the screen frame rate, but js have no way to detect it.
- *
- * If you know your target device, define it manually.
- *
- * @type {Number}
- * @api public
- */
-AnimationFrame.FRAME_RATE = 60
-
-/**
- * Replace the globally defined implementation or define it globally.
- *
- * @param {Object|Number} [options]
- * @api public
- */
-AnimationFrame.shim = function(options) {
-    var animationFrame = new AnimationFrame(options)
-
-    window.requestAnimationFrame = function(callback) {
-        return animationFrame.request(callback)
-    }
-    window.cancelAnimationFrame = function(id) {
-        return animationFrame.cancel(id)
-    }
-
-    return animationFrame
-}
-
-/**
- * Crossplatform Date.now()
- *
- * @return {Number} time in ms
- * @api public
- */
-AnimationFrame.now = Date.now || function() {
-    return (new Date).getTime()
-}
-
-/**
- * Replacement for PerformanceTiming.navigationStart for the case when
- * performance.now is not implemented.
- *
- * https://developer.mozilla.org/en-US/docs/Web/API/PerformanceTiming.navigationStart
- *
- * @type {Number}
- * @api public
- */
-AnimationFrame.navigationStart = AnimationFrame.now()
-
-/**
- * Crossplatform performance.now()
- *
- * https://developer.mozilla.org/en-US/docs/Web/API/Performance.now()
- *
- * @return {Number} relative time in ms
- * @api public
- */
-AnimationFrame.perfNow = function() {
-    if (window.performance && window.performance.now) return window.performance.now()
-    return AnimationFrame.now() - AnimationFrame.navigationStart
-}
-
-/**
- * Is native animation frame implemented. The right value is set during feature
- * detection step.
- *
- * @type {Boolean}
- * @api public
- */
-AnimationFrame.hasNative = false
-
-/**
- * Request animation frame.
- * We will use the native RAF as soon as we know it does works.
- *
- * @param {Function} callback
- * @return {Number} timeout id or requested animation frame id
- * @api public
- */
-AnimationFrame.prototype.request = function(callback) {
-    var self = this,
-        delay
-
-    // Alawys inc counter to ensure it never has a conflict with the native counter.
-    // After the feature test phase we don't know exactly which implementation has been used.
-    // Therefore on #cancel we do it for both.
-    ++this._tickCounter
-
-    if (AnimationFrame.hasNative && self.options.useNative && !this._isCustomFrameRate) {
-        return nativeRequestAnimationFrame(callback)
-    }
-
-    if (!callback) throw new TypeError('Not enough arguments')
-
-    if (this._timeoutId == null) {
-        // Much faster than Math.max
-        // http://jsperf.com/math-max-vs-comparison/3
-        // http://jsperf.com/date-now-vs-date-gettime/11
-        delay = this._frameLength + this._lastTickTime - AnimationFrame.now()
-        if (delay < 0) delay = 0
-
-        this._timeoutId = window.setTimeout(function() {
-            var id
-
-            self._lastTickTime = AnimationFrame.now()
-            self._timeoutId = null
-            ++self._tickCounter
-
-            for (id in self._callbacks) {
-                if (self._callbacks[id]) {
-                    if (AnimationFrame.hasNative && self.options.useNative) {
-                        nativeRequestAnimationFrame(self._callbacks[id])
-                    } else {
-                        self._callbacks[id](AnimationFrame.perfNow())
-                    }
-                    delete self._callbacks[id]
-                }
-            }
-        }, delay)
-    }
-
-    this._callbacks[this._tickCounter] = callback
-    return this._tickCounter
-}
-
-/**
- * Cancel animation frame.
- *
- * @param {Number} timeout id or requested animation frame id
- *
- * @api public
- */
-AnimationFrame.prototype.cancel = function(id) {
-    if (AnimationFrame.hasNative && this.options.useNative) nativeCancelAnimationFrame(id)
-    delete this._callbacks[id]
-}
-
-
-// Support commonjs wrapper, amd define and plain window.
-if (typeof exports == 'object' && typeof module == 'object') {
-    module.exports = AnimationFrame
-} else if (typeof define == 'function' && define.amd) {
-    define(function() { return AnimationFrame })
-} else {
-    window.AnimationFrame = AnimationFrame
-}
-
-}(window));
-
-
 (function() {
 
   var degreesToRadians = fabric.util.degreesToRadians,
       radiansToDegrees = fabric.util.radiansToDegrees;
-  var animationFrame = new AnimationFrame();
+  var RAF = fabric.util.requestAnimFrame;
   fabric.util.object.extend(fabric.Canvas.prototype, /** @lends fabric.Canvas.prototype */ {
 
     /**
@@ -14948,10 +14721,11 @@ if (typeof exports == 'object' && typeof module == 'object') {
           }
 
 
-          animationFrame.request(function (time) {
-              that.__gesturesRenderer(that, time);
-              //console.log('gesture animation frame');
-          });
+          //RAF(function (time) {
+          //    that.__gesturesRenderer(that, time);
+          //    //console.log('gesture animation frame');
+          //});
+        that.__gesturesRenderer(that, 0);
       },
       __gesturesRenderer: function (self,time) {
 
@@ -14964,15 +14738,14 @@ if (typeof exports == 'object' && typeof module == 'object') {
           var target = self.__gesturesParams.target;
 
           var t = self._currentTransform;
-
+          //console.log("Hammer: ", e.type);
           if (e.type === 'pinchend') {
               if (t) {
                   self._finalizeCurrentTransform();
               }
           }
-          else {
+          else if (e.type === 'pinchin' || e.type === 'pinchout' || e.type === 'rotate') {
 
-              
               t.action = 'scale';
               //            if(this._shouldCenterTransform(e, target)) {
               t.originX = t.originY = 'center';
@@ -17467,22 +17240,45 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
     }, this);
   },
 
-  /**
+    /**
+    * @private
+    */
+  __setupState: function (obj) {
+      obj.originalState = {};
+      if (obj.type === 'group') {
+          obj.forEachObject(function (o) {
+              this.__setupState(o);
+          }, this);
+      }
+      obj.saveState();
+  },
+
+    /**
+    * @private
+    */
+  __saveState: function (obj, options) {
+      obj.stateProperties.forEach(function (prop) {
+          this.originalState[prop] = this.get(prop);
+      }, obj);
+
+      if (options && options.stateProperties) {
+          options.stateProperties.forEach(function (prop) {
+              this.originalState[prop] = this.get(prop);
+          }, obj);
+      }
+      if (obj.type === 'group') {
+          obj.forEachObject(function (o) {
+              this.__saveState(o);
+          }, this);
+      }
+  },
+   /**
    * Saves state of an object
    * @param {Object} [options] Object with additional `stateProperties` array to include when saving state
    * @return {fabric.Object} thisArg
    */
   saveState: function(options) {
-    this.stateProperties.forEach(function(prop) {
-      this.originalState[prop] = this.get(prop);
-    }, this);
-
-    if (options && options.stateProperties) {
-      options.stateProperties.forEach(function(prop) {
-        this.originalState[prop] = this.get(prop);
-      }, this);
-    }
-
+    this.__saveState(this,options);
     return this;
   },
 
@@ -17491,9 +17287,7 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
    * @return {fabric.Object} thisArg
    */
   setupState: function() {
-    this.originalState = { };
-    this.saveState();
-
+    this.__setupState(this);
     return this;
   }
 });
@@ -28087,5 +27881,261 @@ fabric.util.object.extend(fabric.IText.prototype, /** @lends fabric.IText.protot
     fabric.Canvas.prototype.setHeight = fabric.StaticCanvas.prototype.setHeight;
   }
 
+})();
+
+
+(function() {
+
+    var stateDirtyProperties = fabric.Object.prototype.stateProperties.concat();
+    stateDirtyProperties.splice(stateDirtyProperties.indexOf('left'), 1);
+    stateDirtyProperties.splice(stateDirtyProperties.indexOf('top'), 1);
+
+    fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.StaticCanvas.prototype */ {
+
+        useOffScreenRender: true,
+        cacheObjects: true,
+
+        /**
+       * Returns true if object state (one of its state properties) was changed
+       * @return {Boolean} true if instance' state has changed since `{@link fabric.Object#saveState}` was called
+       */
+        isDirtyObject: function (object) {
+            // note: if object in group than stateDirtyProperties checked including left and top settings
+            var props = (!object.group) ? stateDirtyProperties : object.stateProperties;
+            var isDirty = props.some(function (prop) {
+                return this.get(prop) !== this.originalState[prop];
+            }, object);
+
+            if (object.type === 'group' && !isDirty) { // check if some objects are dirty, if yes than group object also will be dirty
+                for (var i = object.getObjects().length; i--;) {
+                    var obj = object.item(i);
+                    if (this.isDirtyObject(obj)) {
+                        isDirty = true;
+                        break;
+                    }
+                }
+            } 
+            return isDirty;
+        },
+
+        _createOffScreenCanvas: function () {
+            if (!this.useOffScreenRender) {
+                return;
+            }
+            this.offScreenCanvasEl = this._createCanvasElement();
+            this.offScreenCanvasEl.setAttribute('width', this.width);
+            this.offScreenCanvasEl.setAttribute('height', this.height);
+            this.contextOffScreen = this.offScreenCanvasEl.getContext('2d');
+        },
+
+        /**
+        * Returns context of canvas where objects are drawn
+        * @return {CanvasRenderingContext2D}
+        */
+        getContext: function () {
+            return this.useOffScreenRender ? this.contextOffScreen : (this.contextTop || this.contextContainer);
+        },
+
+
+        /**
+         * Given a context, renders an object on that context
+         * @param {CanvasRenderingContext2D} ctx Context to render object on
+         * @param {fabric.Object} object Object to render
+         * @private
+         */
+        _draw: function (ctx, object) {
+            if (!object) {
+                return;
+            }
+
+            ctx.save();
+            var v = this.viewportTransform;
+            ctx.transform(v[0], v[1], v[2], v[3], v[4], v[5]);
+            if (this._shouldRenderObject(object)) {
+                if (this.cacheObjects) {
+                    this.__drawCached(ctx, object);
+                }
+                else {
+                    object.render(ctx);
+                }
+                
+
+            }
+            ctx.restore();
+            if (!this.controlsAboveOverlay) {
+                object._renderControls(ctx);
+            }
+        },
+
+        __drawCached: function (ctx, object) {
+            var canvas = object._cacheCanvas;
+            var needUpdate = (this.stateful && this.isDirtyObject(object)) || !canvas;//TODO: what if not stateful? Currently will cache forever
+            if (needUpdate) {
+                //debugger;
+                var boundingRect = { width: (object.getWidth()*(object.getBoundingRectWidth() / object.getWidth())), height: (object.getHeight()*(object.getBoundingRectHeight() / object.getHeight())) };
+                if (canvas) {//delete prev. cached canvas
+                    object._cacheCanvas = null;
+                    canvas = null;
+                }
+                canvas = fabric.util.createCanvasElement();
+                
+                canvas.setAttribute('width', boundingRect.width);//bigger for correct rotation without cutting when drawimage
+                canvas.setAttribute('height', boundingRect.height);
+                object._cacheCanvas = canvas;
+                
+                var origParams = {
+                    active: object.get('active'),
+                    left: object.getLeft(),
+                    top: object.getTop()
+                };
+                var originalCanvas = object.canvas;
+
+                object.set('active', false);
+              
+                object.setPositionByOrigin(new fabric.Point(canvas.width * 0.5, canvas.height * 0.5), 'center', 'center');
+
+                var cacheCtx = canvas.getContext('2d');
+                object.render(cacheCtx);
+                cacheCtx.restore();
+                object.set(origParams).setCoords();
+                
+            }
+            ctx.save();
+            ctx.drawImage(canvas, object.getLeft() - canvas.width * 0.5, object.getTop() - canvas.height * 0.5);
+            ctx.restore();
+        },
+        
+
+
+        /**
+        * Clears all contexts (background, main, top) of an instance
+        * @return {fabric.Canvas} thisArg
+        * @chainable
+        */
+        clear: function () {
+            this._objects.length = 0;
+            if (this.discardActiveGroup) {
+                this.discardActiveGroup();
+            }
+            if (this.discardActiveObject) {
+                this.discardActiveObject();
+            }
+            this.clearContext(this.getContext());
+            
+            this.fire('canvas:cleared');
+            this.renderAll();
+            return this;
+        },
+
+        /**
+         * Method to render only the top canvas.
+         * Also used to render the group selection box.
+         * @return {fabric.Canvas} thisArg
+         * @chainable
+         */
+        renderTop: function () {
+            var ctx = this.getContext();
+            this.clearContext(ctx);
+
+            // we render the top context - last object
+            if (this.selection && this._groupSelector) {
+                this._drawSelection();
+            }
+
+            // delegate rendering to group selection if one exists
+            // used for drawing selection borders/controls
+            var activeGroup = this.getActiveGroup();
+            if (activeGroup) {
+                activeGroup.render(ctx);
+            }
+
+            this._renderOverlay(ctx);
+
+            this.fire('after:render');
+
+            return this;
+        },
+        /**
+     * @private
+     * @param {HTMLElement | String} el &lt;canvas> element to initialize instance on
+     * @param {Object} [options] Options object
+     */
+        _initStatic: function (el, options) {
+            this._objects = [];
+
+            this._createLowerCanvas(el);
+            this._initOptions(options);
+            this._createOffScreenCanvas();
+            this._setImageSmoothing();
+
+            if (options.overlayImage) {
+                this.setOverlayImage(options.overlayImage, this.renderAll.bind(this));
+            }
+            if (options.backgroundImage) {
+                this.setBackgroundImage(options.backgroundImage, this.renderAll.bind(this));
+            }
+            if (options.backgroundColor) {
+                this.setBackgroundColor(options.backgroundColor, this.renderAll.bind(this));
+            }
+            if (options.overlayColor) {
+                this.setOverlayColor(options.overlayColor, this.renderAll.bind(this));
+            }
+            this.calcOffset();
+        },
+        
+     
+        /**
+             * Renders both the top canvas and the secondary container canvas.
+             * @param {Boolean} [allOnTop] Whether we want to force all images to be rendered on the top canvas
+             * @return {fabric.Canvas} instance
+             * @chainable
+             */
+        renderAll: function (allOnTop) {
+            
+            var canvasToDrawOn = this[this.useOffScreenRender ? 'contextOffScreen' : ((allOnTop === true && this.interactive) ? 'contextTop' : 'contextContainer')],
+              activeGroup = this.getActiveGroup();
+
+          if (this.contextTop && this.selection && !this._groupSelector) {
+              this.clearContext(this.contextTop);
+          }
+
+          if (!allOnTop) {
+              this.clearContext(canvasToDrawOn);
+          }
+
+          this.fire('before:render');
+
+          if (this.clipTo) {
+              fabric.util.clipContext(this, canvasToDrawOn);
+          }
+
+          this._renderBackground(canvasToDrawOn);
+          this._renderObjects(canvasToDrawOn, activeGroup);
+          this._renderActiveGroup(canvasToDrawOn, activeGroup);
+
+          if (this.clipTo) {
+              canvasToDrawOn.restore();
+          }
+
+          this._renderOverlay(canvasToDrawOn);
+
+          if (this.controlsAboveOverlay && this.interactive) {
+              this.drawControls(canvasToDrawOn);
+          }
+
+          if (this.useOffScreenRender && this.offScreenCanvasEl) {
+              var origCanvasToDrawOn = this[(allOnTop === true && this.interactive) ? 'contextTop' : 'contextContainer'];
+              origCanvasToDrawOn.save();
+              this.clearContext(origCanvasToDrawOn);
+              origCanvasToDrawOn.drawImage(this.offScreenCanvasEl, 0, 0);
+              origCanvasToDrawOn.restore();
+          }
+          this.fire('after:render');
+
+          return this;
+      }
+    
+
+  });
 })();
 
