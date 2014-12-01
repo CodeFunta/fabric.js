@@ -3,6 +3,7 @@
   var degreesToRadians = fabric.util.degreesToRadians,
       radiansToDegrees = fabric.util.radiansToDegrees;
   var RAF = fabric.util.requestAnimFrame;
+
   fabric.util.object.extend(fabric.Canvas.prototype, /** @lends fabric.Canvas.prototype */ {
 
     /**
@@ -31,6 +32,7 @@
                };
 			 
               this.__gesturesFrame();
+              target.fire('touch:gesture', { target: target, e: e });
               //this.__gesturesRenderer();
               //           this.__gesturesInterval(e, self, target);
           }
@@ -90,6 +92,7 @@
           }
           self.renderAll();
           t.action = 'drag';
+
       },
 
     /**

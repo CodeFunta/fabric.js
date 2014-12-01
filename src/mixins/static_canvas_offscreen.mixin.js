@@ -7,17 +7,25 @@
     fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.StaticCanvas.prototype */ {
 
         useOffScreenRender: true,
-        cacheObjects: true,
+        cacheObjects: false,
 
         /**
        * Returns true if object state (one of its state properties) was changed
        * @return {Boolean} true if instance' state has changed since `{@link fabric.Object#saveState}` was called
        */
         isDirtyObject: function (object) {
+            if (!this.stateful) {
+                return;
+            }
             // note: if object in group than stateDirtyProperties checked including left and top settings
             var props = (!object.group) ? stateDirtyProperties : object.stateProperties;
             var isDirty = props.some(function (prop) {
-                return this.get(prop) !== this.originalState[prop];
+                var bVal = this.get(prop) !== this.originalState[prop];
+                //if (bVal)
+                //{
+                //    console.log("Changed '" + prop + "=" + this.get(prop) + "(" + this.originalState[prop] + ") for " + this.type + "->" + (this.text? "["+this.text +"]":""));
+                //}
+                return bVal;
             }, object);
 
             if (object.type === 'group' && !isDirty) { // check if some objects are dirty, if yes than group object also will be dirty
@@ -85,9 +93,12 @@
             var canvas = object._cacheCanvas;
             var needUpdate = (this.stateful && this.isDirtyObject(object)) || !canvas;//TODO: what if not stateful? Currently will cache forever
             if (needUpdate) {
+                //console.log("__drawCached:update");
                 //debugger;
                 var boundingRect = { width: (object.getWidth()*(object.getBoundingRectWidth() / object.getWidth())), height: (object.getHeight()*(object.getBoundingRectHeight() / object.getHeight())) };
                 if (canvas) {//delete prev. cached canvas
+                    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+                    delete object._cacheCanvas;
                     object._cacheCanvas = null;
                     canvas = null;
                 }
@@ -100,16 +111,14 @@
                 var origParams = {
                     active: object.get('active'),
                     left: object.getLeft(),
-                    top: object.getTop(),
-                    //originX: object.getOriginX(),
-                    //originY: object.getOriginY(),
+                    top: object.getTop()
                 };
                 var originalCanvas = object.canvas;
 
                 object.set({ 'active': false /*, 'originX': 'center', 'originY': 'center'*/ });
               
                 object.setPositionByOrigin(new fabric.Point(canvas.width * 0.5, canvas.height * 0.5), object.originX, object.originY);
-                //object.setPositionByOrigin(new fabric.Point(0, 0), object.originX, object.originY);
+                
 
                 var cacheCtx = canvas.getContext('2d');
                 object.render(cacheCtx);

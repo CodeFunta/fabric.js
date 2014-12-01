@@ -7120,6 +7120,7 @@ fabric.PatternBrush = fabric.util.createClass(fabric.PencilBrush, {
                     target: target
                 });
                 target.fire("modified");
+                target.saveState();
             }
             this._restoreOriginXY(target);
         },
@@ -7744,6 +7745,10 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, {
                     target: target
                 };
                 this.__gesturesFrame();
+                target.fire("touch:gesture", {
+                    target: target,
+                    e: e
+                });
             }
             this.fire("touch:gesture", {
                 target: target,
@@ -8693,11 +8698,11 @@ fabric.util.object.extend(fabric.Object.prototype, {
         }
     },
     saveState: function(options) {
-        this.__saveState(this, options);
+        this.canvas && this.canvas.stateful && this.__saveState(this, options);
         return this;
     },
     setupState: function() {
-        this.__setupState(this);
+        this.canvas && this.canvas.stateful && this.__setupState(this);
         return this;
     }
 });
@@ -13668,11 +13673,15 @@ fabric.util.object.extend(fabric.IText.prototype, {
     stateDirtyProperties.splice(stateDirtyProperties.indexOf("top"), 1);
     fabric.util.object.extend(fabric.StaticCanvas.prototype, {
         useOffScreenRender: true,
-        cacheObjects: true,
+        cacheObjects: false,
         isDirtyObject: function(object) {
+            if (!this.stateful) {
+                return;
+            }
             var props = !object.group ? stateDirtyProperties : object.stateProperties;
             var isDirty = props.some(function(prop) {
-                return this.get(prop) !== this.originalState[prop];
+                var bVal = this.get(prop) !== this.originalState[prop];
+                return bVal;
             }, object);
             if (object.type === "group" && !isDirty) {
                 for (var i = object.getObjects().length; i--; ) {
@@ -13725,6 +13734,8 @@ fabric.util.object.extend(fabric.IText.prototype, {
                     height: object.getHeight() * (object.getBoundingRectHeight() / object.getHeight())
                 };
                 if (canvas) {
+                    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+                    delete object._cacheCanvas;
                     object._cacheCanvas = null;
                     canvas = null;
                 }

@@ -350,6 +350,7 @@
       if (this.stateful && target.hasStateChanged()) {
         this.fire('object:modified', { target: target });
         target.fire('modified');
+		target.saveState();
       }
 
       this._restoreOriginXY(target);

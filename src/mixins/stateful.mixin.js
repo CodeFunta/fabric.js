@@ -51,7 +51,7 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
    * @return {fabric.Object} thisArg
    */
   saveState: function(options) {
-    this.__saveState(this,options);
+      this.canvas && this.canvas.stateful && this.__saveState(this, options);
     return this;
   },
 
@@ -60,7 +60,7 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
    * @return {fabric.Object} thisArg
    */
   setupState: function() {
-    this.__setupState(this);
+      this.canvas && this.canvas.stateful && this.__setupState(this);
     return this;
   }
 });
