@@ -7798,13 +7798,13 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, {
             target._scaling = true;
             var constraintPosition = target.translateToOriginPoint(target.getCenterPoint(), t.originX, t.originY);
             if (!by) {
-                t.newScaleX = t.scaleX * s;
-                t.newScaleY = t.scaleY * s;
+                t.newScaleX = target._constrainScale(t.scaleX * s);
+                t.newScaleY = target._constrainScale(t.scaleY * s);
                 if (!lockScalingX) {
-                    target.set("scaleX", t.scaleX * s);
+                    target.set("scaleX", t.newScaleX);
                 }
                 if (!lockScalingY) {
-                    target.set("scaleY", t.scaleY * s);
+                    target.set("scaleY", t.newScaleY);
                 }
             }
             target.setPositionByOrigin(constraintPosition, t.originX, t.originY);
