@@ -7745,10 +7745,6 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, {
                     target: target
                 };
                 this.__gesturesFrame();
-                target.fire("touch:gesture", {
-                    target: target,
-                    e: e
-                });
             }
             this.fire("touch:gesture", {
                 target: target,
@@ -7770,17 +7766,16 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, {
             var e = self.__gesturesParams.e;
             var target = self.__gesturesParams.target;
             var t = self._currentTransform;
+            t.reset = false, t.target.isMoving = true;
             if (e.type === "pinchend") {
                 if (t) {
                     self._finalizeCurrentTransform();
                 }
             } else if (e.type === "pinchin" || e.type === "pinchout" || e.type === "rotate") {
                 t.action = "scale";
-                t.originX = t.originY = "center";
-                self._setOriginToCenter(t.target);
+                self._beforeScaleTransform(e.srcEvent, t);
                 self._scaleObjectBy(e.scale);
                 if (e.rotation !== 0) {
-                    t.action = "rotate";
                     self._rotateObjectByAngle(e.rotation);
                 }
             }
@@ -7796,7 +7791,7 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, {
             var t = this._currentTransform, target = t.target, lockScalingX = target.get("lockScalingX"), lockScalingY = target.get("lockScalingY");
             if (lockScalingX && lockScalingY) return;
             target._scaling = true;
-            var constraintPosition = target.translateToOriginPoint(target.getCenterPoint(), t.originX, t.originY);
+            var constraintPosition = target.translateToOriginPoint(target.getCenterPoint(), "center", "center");
             if (!by) {
                 t.newScaleX = target._constrainScale(t.scaleX * s);
                 t.newScaleY = target._constrainScale(t.scaleY * s);
@@ -7807,11 +7802,12 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, {
                     target.set("scaleY", t.newScaleY);
                 }
             }
-            target.setPositionByOrigin(constraintPosition, t.originX, t.originY);
+            target.setPositionByOrigin(constraintPosition, "center", "center");
         },
         _rotateObjectByAngle: function(curAngle) {
             var t = this._currentTransform;
             if (t.target.get("lockRotation")) return;
+            t.action = "rotate";
             t.target.angle = radiansToDegrees(degreesToRadians(curAngle) + t.theta);
         }
     });
@@ -8683,6 +8679,9 @@ fabric.util.object.extend(fabric.Object.prototype, {
         obj.saveState();
     },
     __saveState: function(obj, options) {
+        if (!obj.originalState) {
+            obj.originalState = {};
+        }
         obj.stateProperties.forEach(function(prop) {
             this.originalState[prop] = this.get(prop);
         }, obj);
@@ -10495,6 +10494,7 @@ fabric.util.object.extend(fabric.Object.prototype, {
         },
         _onObjectAdded: function(object) {
             object.group = this;
+            this.canvas && this.canvas.stateful && this.setupState();
         },
         _onObjectRemoved: function(object) {
             delete object.group;
@@ -13680,7 +13680,7 @@ fabric.util.object.extend(fabric.IText.prototype, {
             }
             var props = !object.group ? stateDirtyProperties : object.stateProperties;
             var isDirty = props.some(function(prop) {
-                var bVal = this.get(prop) !== this.originalState[prop];
+                var bVal = this.originalState && this.get(prop) !== this.originalState[prop];
                 return bVal;
             }, object);
             if (object.type === "group" && !isDirty) {

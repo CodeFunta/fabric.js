@@ -20,7 +20,7 @@
             // note: if object in group than stateDirtyProperties checked including left and top settings
             var props = (!object.group) ? stateDirtyProperties : object.stateProperties;
             var isDirty = props.some(function (prop) {
-                var bVal = this.get(prop) !== this.originalState[prop];
+                var bVal = this.originalState && this.get(prop) !== this.originalState[prop];
                 //if (bVal)
                 //{
                 //    console.log("Changed '" + prop + "=" + this.get(prop) + "(" + this.originalState[prop] + ") for " + this.type + "->" + (this.text? "["+this.text +"]":""));

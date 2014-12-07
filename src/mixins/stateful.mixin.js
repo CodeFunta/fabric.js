@@ -30,6 +30,9 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
     * @private
     */
   __saveState: function (obj, options) {
+      if (!obj.originalState) {
+            obj.originalState = {};
+      }
       obj.stateProperties.forEach(function (prop) {
           this.originalState[prop] = this.get(prop);
       }, obj);

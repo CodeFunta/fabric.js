@@ -14704,14 +14704,15 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
                };
 			 
               this.__gesturesFrame();
-              target.fire('touch:gesture', { target: target, e: e });
+              //target.fire('touch:gesture', { target: target, e: e });
               //this.__gesturesRenderer();
               //           this.__gesturesInterval(e, self, target);
+              
           }
-
-
-
           this.fire('touch:gesture', { target: target, e: e });
+
+
+          //
       },
 
       // unused
@@ -14742,6 +14743,15 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
 
           var t = self._currentTransform;
           //console.log("Hammer: ", e.type);
+          t.reset = false,
+          t.target.isMoving = true;
+          
+          //if (e.type === 'pinchstart') {
+          //    if (t) {
+          //        t.originX = t.originY = 'center';
+          //        self._setOriginToCenter(t.target);
+          //    }
+          //}
           if (e.type === 'pinchend') {
               if (t) {
                   self._finalizeCurrentTransform();
@@ -14749,20 +14759,23 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
           }
           else if (e.type === 'pinchin' || e.type === 'pinchout' || e.type === 'rotate') {
 
+              //console.log("Hammer: ", e.type);
               t.action = 'scale';
+              self._beforeScaleTransform(e.srcEvent, t);
               //            if(this._shouldCenterTransform(e, target)) {
-              t.originX = t.originY = 'center';
-              self._setOriginToCenter(t.target);
+              
               //            }
-
+              //t.originX = t.originY = 'center';
+              
               self._scaleObjectBy(e.scale);
 
               if (e.rotation !== 0) {
-                  t.action = 'rotate';
+                  
                   self._rotateObjectByAngle(e.rotation);
               }
           }
           self.renderAll();
+          //setTimeout(self.renderAll.bind(self), 0);
           t.action = 'drag';
 
       },
@@ -14796,7 +14809,7 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
 
         target._scaling = true;
 
-        var constraintPosition = target.translateToOriginPoint(target.getCenterPoint(), t.originX, t.originY);
+        var constraintPosition = target.translateToOriginPoint(target.getCenterPoint(), "center", "center");
 
         if (!by) {
             t.newScaleX = target._constrainScale(t.scaleX * s);
@@ -14809,14 +14822,8 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
                 target.set('scaleY', t.newScaleY);
             }
         }
-        //            else if (by === 'x' && !target.get('lockUniScaling')) {
-        //                lockScalingX || target.set('scaleX', t.scaleX * s);
-        //            }
-        //            else if (by === 'y' && !target.get('lockUniScaling')) {
-        //                lockScalingY || target.set('scaleY', t.scaleY * s);
-        //            }
-
-        target.setPositionByOrigin(constraintPosition, t.originX, t.originY);
+      
+        target.setPositionByOrigin(constraintPosition, "center", "center");
     },
       /**
        * Rotates object by an angle
@@ -14827,6 +14834,7 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, /** @lends fabric.Stati
 
         if (t.target.get('lockRotation'))
             return;
+        t.action = 'rotate';
         t.target.angle = radiansToDegrees(degreesToRadians(curAngle) + t.theta);
     }
 
@@ -17262,6 +17270,9 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
     * @private
     */
   __saveState: function (obj, options) {
+      if (!obj.originalState) {
+            obj.originalState = {};
+      }
       obj.stateProperties.forEach(function (prop) {
           this.originalState[prop] = this.get(prop);
       }, obj);
@@ -21020,6 +21031,7 @@ fabric.util.object.extend(fabric.Object.prototype, /** @lends fabric.Object.prot
      */
     _onObjectAdded: function(object) {
       object.group = this;
+	  this.canvas && this.canvas.stateful && this.setupState();
     },
 
     /**
@@ -27911,7 +27923,7 @@ fabric.util.object.extend(fabric.IText.prototype, /** @lends fabric.IText.protot
             // note: if object in group than stateDirtyProperties checked including left and top settings
             var props = (!object.group) ? stateDirtyProperties : object.stateProperties;
             var isDirty = props.some(function (prop) {
-                var bVal = this.get(prop) !== this.originalState[prop];
+                var bVal = this.originalState && this.get(prop) !== this.originalState[prop];
                 //if (bVal)
                 //{
                 //    console.log("Changed '" + prop + "=" + this.get(prop) + "(" + this.originalState[prop] + ") for " + this.type + "->" + (this.text? "["+this.text +"]":""));

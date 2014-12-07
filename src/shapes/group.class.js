@@ -166,6 +166,7 @@
      */
     _onObjectAdded: function(object) {
       object.group = this;
+	  this.canvas && this.canvas.stateful && this.setupState();
     },
 
     /**

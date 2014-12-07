@@ -32,14 +32,15 @@
                };
 			 
               this.__gesturesFrame();
-              target.fire('touch:gesture', { target: target, e: e });
+              //target.fire('touch:gesture', { target: target, e: e });
               //this.__gesturesRenderer();
               //           this.__gesturesInterval(e, self, target);
+              
           }
-
-
-
           this.fire('touch:gesture', { target: target, e: e });
+
+
+          //
       },
 
       // unused
@@ -70,6 +71,15 @@
 
           var t = self._currentTransform;
           //console.log("Hammer: ", e.type);
+          t.reset = false,
+          t.target.isMoving = true;
+          
+          //if (e.type === 'pinchstart') {
+          //    if (t) {
+          //        t.originX = t.originY = 'center';
+          //        self._setOriginToCenter(t.target);
+          //    }
+          //}
           if (e.type === 'pinchend') {
               if (t) {
                   self._finalizeCurrentTransform();
@@ -77,20 +87,23 @@
           }
           else if (e.type === 'pinchin' || e.type === 'pinchout' || e.type === 'rotate') {
 
+              //console.log("Hammer: ", e.type);
               t.action = 'scale';
+              self._beforeScaleTransform(e.srcEvent, t);
               //            if(this._shouldCenterTransform(e, target)) {
-              t.originX = t.originY = 'center';
-              self._setOriginToCenter(t.target);
+              
               //            }
-
+              //t.originX = t.originY = 'center';
+              
               self._scaleObjectBy(e.scale);
 
               if (e.rotation !== 0) {
-                  t.action = 'rotate';
+                  
                   self._rotateObjectByAngle(e.rotation);
               }
           }
           self.renderAll();
+          //setTimeout(self.renderAll.bind(self), 0);
           t.action = 'drag';
 
       },
@@ -124,7 +137,7 @@
 
         target._scaling = true;
 
-        var constraintPosition = target.translateToOriginPoint(target.getCenterPoint(), t.originX, t.originY);
+        var constraintPosition = target.translateToOriginPoint(target.getCenterPoint(), "center", "center");
 
         if (!by) {
             t.newScaleX = target._constrainScale(t.scaleX * s);
@@ -137,14 +150,8 @@
                 target.set('scaleY', t.newScaleY);
             }
         }
-        //            else if (by === 'x' && !target.get('lockUniScaling')) {
-        //                lockScalingX || target.set('scaleX', t.scaleX * s);
-        //            }
-        //            else if (by === 'y' && !target.get('lockUniScaling')) {
-        //                lockScalingY || target.set('scaleY', t.scaleY * s);
-        //            }
-
-        target.setPositionByOrigin(constraintPosition, t.originX, t.originY);
+      
+        target.setPositionByOrigin(constraintPosition, "center", "center");
     },
       /**
        * Rotates object by an angle
@@ -155,6 +162,7 @@
 
         if (t.target.get('lockRotation'))
             return;
+        t.action = 'rotate';
         t.target.angle = radiansToDegrees(degreesToRadians(curAngle) + t.theta);
     }
 
