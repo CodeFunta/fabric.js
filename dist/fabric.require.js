@@ -7779,7 +7779,6 @@ fabric.util.object.extend(fabric.StaticCanvas.prototype, {
                     self._rotateObjectByAngle(e.rotation);
                 }
             }
-            self.renderAll();
             t.action = "drag";
         },
         __onDragHammer: function(e, self) {
@@ -13671,9 +13670,10 @@ fabric.util.object.extend(fabric.IText.prototype, {
     var stateDirtyProperties = fabric.Object.prototype.stateProperties.concat();
     stateDirtyProperties.splice(stateDirtyProperties.indexOf("left"), 1);
     stateDirtyProperties.splice(stateDirtyProperties.indexOf("top"), 1);
+    var renderInLoopUsed = false;
+    var RAF = fabric.util.requestAnimFrame;
     fabric.util.object.extend(fabric.StaticCanvas.prototype, {
         useOffScreenRender: true,
-        cacheObjects: false,
         isDirtyObject: function(object) {
             if (!this.stateful) {
                 return;
@@ -13714,55 +13714,12 @@ fabric.util.object.extend(fabric.IText.prototype, {
             var v = this.viewportTransform;
             ctx.transform(v[0], v[1], v[2], v[3], v[4], v[5]);
             if (this._shouldRenderObject(object)) {
-                if (this.cacheObjects) {
-                    this.__drawCached(ctx, object);
-                } else {
-                    object.render(ctx);
-                }
+                object.render(ctx);
             }
             ctx.restore();
             if (!this.controlsAboveOverlay) {
                 object._renderControls(ctx);
             }
-        },
-        __drawCached: function(ctx, object) {
-            var canvas = object._cacheCanvas;
-            var needUpdate = this.stateful && this.isDirtyObject(object) || !canvas;
-            if (needUpdate) {
-                var boundingRect = {
-                    width: object.getWidth() * (object.getBoundingRectWidth() / object.getWidth()),
-                    height: object.getHeight() * (object.getBoundingRectHeight() / object.getHeight())
-                };
-                if (canvas) {
-                    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
-                    delete object._cacheCanvas;
-                    object._cacheCanvas = null;
-                    canvas = null;
-                }
-                canvas = fabric.util.createCanvasElement();
-                canvas.setAttribute("width", boundingRect.width * 2);
-                canvas.setAttribute("height", boundingRect.height * 2);
-                object._cacheCanvas = canvas;
-                var origParams = {
-                    active: object.get("active"),
-                    left: object.getLeft(),
-                    top: object.getTop()
-                };
-                var originalCanvas = object.canvas;
-                object.set({
-                    active: false
-                });
-                object.setPositionByOrigin(new fabric.Point(canvas.width * .5, canvas.height * .5), object.originX, object.originY);
-                var cacheCtx = canvas.getContext("2d");
-                object.render(cacheCtx);
-                cacheCtx.restore();
-                object.set(origParams).setCoords();
-            }
-            ctx.save();
-            var cx = -canvas.width * .5;
-            var cy = -canvas.height * .5;
-            ctx.drawImage(canvas, object.getLeft() + cx, object.getTop() + cy);
-            ctx.restore();
         },
         clear: function() {
             this._objects.length = 0;
@@ -13811,7 +13768,17 @@ fabric.util.object.extend(fabric.IText.prototype, {
             }
             this.calcOffset();
         },
-        renderAll: function(allOnTop) {
+        _renderLoop: function(allOnTop) {
+            var self = this;
+            RAF(function() {
+                self._renderAll(allOnTop);
+                if (renderInLoopUsed) {
+                    self._renderLoop(allOnTop);
+                }
+            });
+            return self;
+        },
+        _renderAll: function(allOnTop) {
             var canvasToDrawOn = this[this.useOffScreenRender ? "contextOffScreen" : allOnTop === true && this.interactive ? "contextTop" : "contextContainer"], activeGroup = this.getActiveGroup();
             if (this.contextTop && this.selection && !this._groupSelector) {
                 this.clearContext(this.contextTop);
@@ -13841,6 +13808,23 @@ fabric.util.object.extend(fabric.IText.prototype, {
                 origCanvasToDrawOn.restore();
             }
             this.fire("after:render");
+            return this;
+        },
+        renderAll: function(allOnTop) {
+            if (renderInLoopUsed) {
+                return this;
+            }
+            return this._renderAll(allOnTop);
+        },
+        startRenderLoop: function(allOnTop) {
+            if (!renderInLoopUsed) {
+                renderInLoopUsed = true;
+                this._renderLoop(allOnTop);
+            }
+            return this;
+        },
+        stopRenderLoop: function() {
+            renderInLoopUsed = false;
             return this;
         }
     });

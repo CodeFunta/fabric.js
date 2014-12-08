@@ -102,7 +102,7 @@
                   self._rotateObjectByAngle(e.rotation);
               }
           }
-          self.renderAll();
+          //self.renderAll();
           //setTimeout(self.renderAll.bind(self), 0);
           t.action = 'drag';
 
