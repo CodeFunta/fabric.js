@@ -13703,6 +13703,33 @@ fabric.util.object.extend(fabric.IText.prototype, {
             this.offScreenCanvasEl.setAttribute("height", this.height);
             this.contextOffScreen = this.offScreenCanvasEl.getContext("2d");
         },
+        _setBackstoreDimension: function(prop, value) {
+            this.lowerCanvasEl[prop] = value;
+            if (this.upperCanvasEl) {
+                this.upperCanvasEl[prop] = value;
+            }
+            if (this.cacheCanvasEl) {
+                this.cacheCanvasEl[prop] = value;
+            }
+            if (this.offScreenCanvasEl) {
+                this.offScreenCanvasEl[prop] = value;
+            }
+            this[prop] = value;
+            return this;
+        },
+        _setCssDimension: function(prop, value) {
+            this.lowerCanvasEl.style[prop] = value;
+            if (this.upperCanvasEl) {
+                this.upperCanvasEl.style[prop] = value;
+            }
+            if (this.offScreenCanvasEl) {
+                this.offScreenCanvasEl.style[prop] = value;
+            }
+            if (this.wrapperEl) {
+                this.wrapperEl.style[prop] = value;
+            }
+            return this;
+        },
         getContext: function() {
             return this.useOffScreenRender ? this.contextOffScreen : this.contextTop || this.contextContainer;
         },

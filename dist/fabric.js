@@ -27954,6 +27954,57 @@ fabric.util.object.extend(fabric.IText.prototype, /** @lends fabric.IText.protot
         },
 
         /**
+        * Helper for setting width/height
+        * @private
+        * @param {String} prop property (width|height)
+        * @param {Number} value value to set property to
+        * @return {fabric.Canvas} instance
+        * @chainable true
+        */
+        _setBackstoreDimension: function (prop, value) {
+            this.lowerCanvasEl[prop] = value;
+
+            if (this.upperCanvasEl) {
+                this.upperCanvasEl[prop] = value;
+            }
+
+            if (this.cacheCanvasEl) {
+                this.cacheCanvasEl[prop] = value;
+            }
+
+            if (this.offScreenCanvasEl) {
+                this.offScreenCanvasEl[prop] = value;
+            }
+
+            this[prop] = value;
+
+            return this;
+        },
+
+        /**
+         * Helper for setting css width/height
+         * @private
+         * @param {String} prop property (width|height)
+         * @param {String} value value to set property to
+         * @return {fabric.Canvas} instance
+         * @chainable true
+         */
+        _setCssDimension: function (prop, value) {
+            this.lowerCanvasEl.style[prop] = value;
+
+            if (this.upperCanvasEl) {
+                this.upperCanvasEl.style[prop] = value;
+            }
+            if (this.offScreenCanvasEl) {
+                this.offScreenCanvasEl.style[prop] = value;
+            }
+            if (this.wrapperEl) {
+                this.wrapperEl.style[prop] = value;
+            }
+
+            return this;
+        },
+        /**
         * Returns context of canvas where objects are drawn
         * @return {CanvasRenderingContext2D}
         */
@@ -28035,11 +28086,14 @@ fabric.util.object.extend(fabric.IText.prototype, /** @lends fabric.IText.protot
 
             return this;
         },
+
+        
+
         /**
-     * @private
-     * @param {HTMLElement | String} el &lt;canvas> element to initialize instance on
-     * @param {Object} [options] Options object
-     */
+         * @private
+         * @param {HTMLElement | String} el &lt;canvas> element to initialize instance on
+         * @param {Object} [options] Options object
+         */
         _initStatic: function (el, options) {
             this._objects = [];
 
